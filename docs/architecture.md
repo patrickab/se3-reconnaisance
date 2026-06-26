@@ -8,8 +8,8 @@ fire, where am I exposed* — fast and legible.
 ## One-line system
 
 Provided 3D data → Python ingest/processing → packed web assets → interactive
-three.js viewer. Tactical analysis (viewshed engine + threat maps + routes) is
-the **next** layer, not yet built.
+three.js viewer. The tactical layer is now being built on top: the **viewshed
+engine (Slice 1) is done**; threat maps + routes come next.
 
 ## Components
 
@@ -18,7 +18,8 @@ the **next** layer, not yet built.
 | **Data** (`data/`) | Provided inputs, gitignored: point cloud + object boxes | given |
 | **Backend** (`src/backend/`) | Python IO, raster/web prep scripts | built |
 | **Frontend** (`src/frontend/`) | Static three.js 3D viewer, no build step | built |
-| **Tactical layer** (`src/backend/`) | viewshed → threat maps → routes | planned |
+| **Tactical layer** (`src/backend/`) | `terrain.py` + `visibility.py` (viewshed) | **Slice 1 built** |
+| **Tactical layer** (`src/backend/`) | `fields.py` (threat maps) → `routes.py` | planned |
 
 ## Data (the foundation)
 
@@ -58,7 +59,7 @@ data/bounding_boxes.json ──────────────────�
 in metres from that origin. Frame mapping in viewer: **east → X, elevation →
 Y (up), north → −Z**. True 1:1 scale, no vertical exaggeration.
 
-## Planned tactical layer
+## Tactical layer
 
 Spine = **one primitive, the viewshed**, because *observation gates
 lethality*: direct fire = a weapon sees you & in range; indirect fire = any
@@ -66,15 +67,31 @@ observer sees you, in range, kill-chain closes. Build order (all share the
 visibility primitive):
 
 ```
-terrain.py    derive ground surface + vegetation mask from cloud
-   ↓          (cover = boxes stop fire; concealment = vegetation hides only)
-visibility.py viewshed / LOS on terrain + 58 box occluders   ← core
-   ↓
-fields.py     O (combined observation), D (direct-fire), I (indirect),
+terrain.py    DSM from cloud + 58 boxes stamped as occluders   [BUILT, Slice 1]
+   ↓          (vegetation mask for concealment still to add)
+visibility.py viewshed / LOS on the DSM (eye/target ht, range, [BUILT, Slice 1]
+   ↓          arc, facing)   ← core primitive
+fields.py     O (combined observation), D (direct-fire), I (indirect),  [planned]
    ↓          cover C, concealment K, traversability T → composite risk
-routes.py     least-cost approach (A*/Dijkstra on cost raster)
+routes.py     least-cost approach (A*/Dijkstra on cost raster)          [planned]
               → covered axis, bounds, chokepoints, dead ground, HVT, go/no-go
 ```
+
+### Viewshed engine (Slice 1, built)
+
+- **`terrain.py`** → `build_dsm()`: max-height grid (default 1 m) from the cloud,
+  with the 58 oriented boxes rasterized in as solid occluders (so walls/buildings
+  block line of sight even where the cloud is sparse); gaps nearest-filled. Saved
+  as a georeferenced **GeoTIFF** (`build/dsm.tif`, UTM).
+- **`visibility.py`** → `viewshed()`: radial sweep from an observer; per ray it
+  tracks the running-max terrain elevation angle and marks a cell visible when a
+  standing target there clears everything closer. Parameters: eye height, target
+  height, max range, arc, facing. Outputs `build/viewshed.tif` + a per-web-point
+  `viewshed.bin`/`.json` overlay the viewer drapes (red = seen, green = dead
+  ground), with the observer marker + range ring. Observer auto-placed at a
+  realistic roof **edge** (not the centre of a large flat roof, which self-occludes).
+- Inputs/outputs are georeferenced UTM (GeoTIFF) — reusable in QGIS / SE3's stack
+  — plus a compact binary derived for the browser.
 
 Red laydown (`data/enemy_assets.json`, proposed) places a realistic Russian
 threat model into the zone; Blue maneuver analysis computes the friendly

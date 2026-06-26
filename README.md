@@ -6,8 +6,8 @@
 > I have field of fire, where am I exposed* — fast and legible.
 
 Docs:
-- [`docs/CHALLENGE.md`](docs/CHALLENGE.md) — the challenge brief & our direction
-- [`docs/DATA.md`](docs/DATA.md) — exactly what's in the dataset (inspected, not assumed)
+- [`docs/challange.md`](docs/challange.md) — the challenge brief & our direction
+- [`docs/data.md`](docs/data.md) — exactly what's in the dataset (inspected, not assumed)
 - [`docs/THREAT_LIBRARY.md`](docs/THREAT_LIBRARY.md) — Red (OPFOR) asset model: per-system observation + weapon envelopes
 - [`docs/MANEUVER_ANALYSIS.md`](docs/MANEUVER_ANALYSIS.md) — Blue course of action: threat maps, covered approach, suppression priority, go/no-go
 
@@ -69,9 +69,11 @@ observer sees you). See the two tactical docs above.
 
 - [x] Data ingest + inspection, web 3D viewer with semantic objects + thermal
 - [x] Tactical concept: threat library (Red) + maneuver analysis (Blue)
-- [ ] Derived terrain surface + vegetation layer from the cloud (cover vs concealment)
-- [ ] **Viewshed / line-of-sight engine** (terrain + the 58 box occluders) — core
+- [x] **Slice 1 — viewshed / line-of-sight engine** (DSM + the 58 box occluders),
+      with the seen / dead-ground overlay in the viewer
+- [ ] Derived vegetation mask from the cloud (concealment, to complement box cover)
 - [ ] `data/enemy_assets.json` schema + place Red assets in the viewer
+- [ ] Slice 2 — FastAPI endpoint → live "drop a pin" viewshed
 - [ ] Threat maps: combined observation `O`, direct-fire `D`, indirect `I`
 - [ ] Approach-route cost surface → covered axis, bounds, chokepoints, dead ground
 - [ ] Suppression priority (HVT) + go/no-go callout, in MGRS, < 10 s

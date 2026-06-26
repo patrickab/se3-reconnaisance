@@ -4,7 +4,9 @@
 
 - **Python ≥ 3.12**, managed by **uv** (`uv sync`, `uv run python …`).
   Build backend: **hatchling**; package = `src`.
-- Deps kept minimal: `numpy>=2.0`, `matplotlib>=3.8`, `pillow>=10.0`.
+- Deps: `numpy>=2.0`, `matplotlib>=3.8`, `pillow>=10.0`, plus the geo stack for
+  the tactical layer — `rasterio>=1.4` (GeoTIFF), `shapely>=2.0` (footprints),
+  `scipy>=1.13` (gap-fill).
 - **Frontend:** vanilla static HTML + **three.js@0.160** via CDN importmap.
   No bundler, no npm, no build step. Browser needs internet on first load.
 
@@ -39,7 +41,7 @@
 - **Never commit data** — `data/*.{ply,json,pcd,las,laz,bag}` gitignored.
   Generated web assets (`src/frontend/public/*`), figures (`docs/figures/`,
   `*.png/*.jpg`), and `uv.lock` are gitignored too.
-- Verify the data by parsing it; don't trust marketing claims (see `DATA.md`).
+- Verify the data by parsing it; don't trust marketing claims (see `data.md`).
 
 ## Git / workflow
 

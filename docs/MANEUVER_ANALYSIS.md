@@ -92,11 +92,11 @@ an OP/weapon. This recovers a "live scene intelligence" angle from a single pass
 
 | Layer | Source | Status |
 |-------|--------|--------|
-| terrain surface, slope | point cloud | next |
-| occluders / hard cover | the 58 boxes | have |
+| terrain surface (DSM) | point cloud | **built** (`terrain.py`, Slice 1) |
+| occluders / hard cover | the 58 boxes | **built** (stamped into DSM) |
+| viewshed engine | DSM + boxes | **built** (`visibility.py`, Slice 1) |
 | concealment (vegetation) | derived from cloud RGB+geometry | next |
-| viewshed engine | terrain + boxes | **core to build** |
-| `O/D/I` threat maps | viewshed + `enemy_assets.json` | after engine |
+| `O/D/I` threat maps | viewshed + `enemy_assets.json` | after `fields.py` |
 | route + COA outputs | cost raster + A* | after maps |
 
 Backend modules to add live in [`src/backend/README.md`](../src/backend/README.md):
