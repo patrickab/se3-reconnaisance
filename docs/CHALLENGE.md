@@ -45,6 +45,10 @@ heightmap — *not* volumetric X-ray 3D (the data is a ~4 pts/m² top-down surfa
 Bonus single-pass intelligence we *can* do now: flag **thermal anomalies**
 (occupied / recently-active structures) from `avg_temperature`.
 
-Open questions for the mentor live in the team notes; the two that gate
-everything: *is there a second pass?* and *what does a "good" < 10 s output look
-like to you?*
+The full Track-1 concept — placing a realistic Russian threat laydown and
+computing the friendly course of action against it — is in
+[THREAT_LIBRARY.md](THREAT_LIBRARY.md) (Red assets) and
+[MANEUVER_ANALYSIS.md](MANEUVER_ANALYSIS.md) (Blue movement).
+
+Open questions for the mentor; the two that gate everything: *is there a second
+pass?* and *what does a "good" < 10 s output look like to you?*

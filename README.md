@@ -5,8 +5,11 @@
 > judgments an operator needs — *where is the enemy likely to approach, where do
 > I have field of fire, where am I exposed* — fast and legible.
 
-See [`docs/CHALLENGE.md`](docs/CHALLENGE.md) for the challenge brief and
-[`docs/DATA.md`](docs/DATA.md) for exactly what's in the dataset (inspected, not assumed).
+Docs:
+- [`docs/CHALLENGE.md`](docs/CHALLENGE.md) — the challenge brief & our direction
+- [`docs/DATA.md`](docs/DATA.md) — exactly what's in the dataset (inspected, not assumed)
+- [`docs/THREAT_LIBRARY.md`](docs/THREAT_LIBRARY.md) — Red (OPFOR) asset model: per-system observation + weapon envelopes
+- [`docs/MANEUVER_ANALYSIS.md`](docs/MANEUVER_ANALYSIS.md) — Blue course of action: threat maps, covered approach, suppression priority, go/no-go
 
 ## Repo layout
 
@@ -59,10 +62,19 @@ dimensions / temperature / UTM position. North arrow + 100 m grid for scale.
 
 ## Status / roadmap
 
+We model a realistic **Russian threat laydown** and compute how friendly forces
+maneuver against it. The spine is one primitive — the **viewshed** — because
+observation gates lethality (direct fire: a weapon sees you; indirect fire: an
+observer sees you). See the two tactical docs above.
+
 - [x] Data ingest + inspection, web 3D viewer with semantic objects + thermal
-- [ ] Derived ground + vegetation layer from the cloud (cover vs concealment)
-- [ ] **Track 1** viewshed / field-of-fire engine (terrain + box occluders)
-- [ ] Exposure / concealment map, approach-route cost surface, chokepoints
+- [x] Tactical concept: threat library (Red) + maneuver analysis (Blue)
+- [ ] Derived terrain surface + vegetation layer from the cloud (cover vs concealment)
+- [ ] **Viewshed / line-of-sight engine** (terrain + the 58 box occluders) — core
+- [ ] `data/enemy_assets.json` schema + place Red assets in the viewer
+- [ ] Threat maps: combined observation `O`, direct-fire `D`, indirect `I`
+- [ ] Approach-route cost surface → covered axis, bounds, chokepoints, dead ground
+- [ ] Suppression priority (HVT) + go/no-go callout, in MGRS, < 10 s
 - [ ] Enemy-perspective viewshed (drop a pin → what they see & threaten)
 
 ## Team
