@@ -40,7 +40,7 @@
 <div id="hud" class="panel" style="display:none">
   <h1>SE3 ZONE · 1264 × 775 m · 1:1</h1>
   <div class="row"><label>points</label>
-    <span class="seg"><button id="bRGB" class="on">RGB</button><button id="bHGT">height</button></span></div>
+    <span class="seg"><button id="bRGB" class="on">RGB</button><button id="bHGT">height</button><button id="bVIS">viewshed</button></span></div>
   <div class="row"><label>objects</label>
     <span class="seg"><button id="bCLS" class="on">class</button><button id="bTHM">thermal</button></span></div>
   <div class="row"><label>point size</label><input id="psz" type="range" min="0.3" max="4" step="0.1" value="1.2"></div>
@@ -55,6 +55,12 @@
   <div id="thermbar" style="display:none;margin-top:8px;font-size:10px;color:#6b7c91">thermal 9.8 → 25.4 °C</div></div>
 
 <div id="info" class="panel"><h3 id="iName">—</h3><table id="iTab"></table></div>
+
+<div id="vshud" class="panel" style="display:none;bottom:64px;left:12px;max-width:240px">
+  <h3 style="margin:0 0 6px;font-size:12px;color:#ffe14d">VIEWSHED · enemy OP</h3>
+  <div id="vstxt" style="font-size:11px;color:#9fb0c3"></div>
+  <div style="margin-top:6px;font-size:11px"><span style="color:#ff2e2e">■</span> seen by OP &nbsp;&nbsp; <span style="color:#1fb866">■</span> dead ground / concealed</div>
+</div>
 
 <div id="help">drag = orbit · scroll = zoom · right-drag = pan · click a box = details</div>
 
@@ -97,6 +103,18 @@ function turbo(t){t=Math.min(1,Math.max(0,t));
 const colHGT=new Float32Array(N*3);
 for(let i=0;i<N;i++){const c=turbo((heights[i]-zmin)/(zmax-zmin));colHGT[i*3]=c[0];colHGT[i*3+1]=c[1];colHGT[i*3+2]=c[2];}
 
+// ---- viewshed overlay (optional layer produced by src/backend/visibility.py) ----
+let viewObs=null, colVIS=null;
+try{
+  viewObs = await (await fetch('public/viewshed.json')).json();
+  const vbuf = new Uint8Array(await (await fetch('public/viewshed.bin')).arrayBuffer());
+  colVIS = new Float32Array(N*3);
+  for(let i=0;i<N;i++){
+    if(vbuf[i]){ colVIS[i*3]=1.0; colVIS[i*3+1]=0.18; colVIS[i*3+2]=0.18; }   // red = seen by OP
+    else       { colVIS[i*3]=0.12; colVIS[i*3+1]=0.70; colVIS[i*3+2]=0.45; }  // green = dead ground
+  }
+}catch(e){ /* viewshed not generated yet — button stays disabled */ }
+
 const geo=new THREE.BufferGeometry();
 geo.setAttribute('position',new THREE.BufferAttribute(positions,3));
 geo.setAttribute('color',new THREE.BufferAttribute(colRGB.slice(),3));
@@ -131,6 +149,22 @@ for(const b of boxes){
   boxGroup.add(m); fills.push(m);
 }
 
+// ---- observer marker + range ring (viewshed) ----
+if(viewObs){
+  const [vx,vy,vz]=viewObs.observer_view;
+  const grp=new THREE.Group();
+  const mk=new THREE.Mesh(new THREE.OctahedronGeometry(7),new THREE.MeshBasicMaterial({color:0xffe14d}));
+  mk.position.set(vx,vy,vz); grp.add(mk);
+  grp.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(
+    [new THREE.Vector3(vx,vy,vz),new THREE.Vector3(vx,-sz/2,vz)]),
+    new THREE.LineBasicMaterial({color:0xffe14d})));
+  const R=viewObs.params.range_m;
+  const ring=new THREE.Mesh(new THREE.RingGeometry(R-4,R,160),
+    new THREE.MeshBasicMaterial({color:0xffe14d,transparent:true,opacity:0.3,side:THREE.DoubleSide}));
+  ring.rotation.x=-Math.PI/2; ring.position.set(vx,-sz/2+0.5,vz); grp.add(ring);
+  scene.add(grp);
+}
+
 // ---- camera / controls ----
 const ctrl=new OrbitControls(cam,renderer.domElement); ctrl.enableDamping=true; ctrl.dampingFactor=0.08;
 const D=Math.max(sx,sy);
@@ -146,8 +180,11 @@ $('cEdges').onchange=e=>fills.forEach(m=>m.userData.edge.visible=e.target.checke
 $('cPts').onchange=e=>cloud.visible=e.target.checked;
 $('top').onclick=top; $('obl').onclick=obl; $('reset').onclick=obl;
 function setPtCol(a,w){geo.setAttribute('color',new THREE.BufferAttribute(a,3));geo.attributes.color.needsUpdate=true;
-  $('bRGB').classList.toggle('on',w==='rgb');$('bHGT').classList.toggle('on',w==='hgt');}
+  $('bRGB').classList.toggle('on',w==='rgb');$('bHGT').classList.toggle('on',w==='hgt');$('bVIS').classList.toggle('on',w==='vis');
+  $('vshud').style.display=(w==='vis')?'block':'none';}
 $('bRGB').onclick=()=>setPtCol(colRGB.slice(),'rgb'); $('bHGT').onclick=()=>setPtCol(colHGT.slice(),'hgt');
+if(colVIS){ $('bVIS').onclick=()=>setPtCol(colVIS.slice(),'vis'); }
+else { $('bVIS').disabled=true; $('bVIS').style.opacity=0.4; $('bVIS').title='run src/backend/visibility.py'; }
 function boxColorMode(mode){
   $('bCLS').classList.toggle('on',mode==='cls');$('bTHM').classList.toggle('on',mode==='thm');
   $('thermbar').style.display=mode==='thm'?'block':'none';
@@ -190,6 +227,7 @@ function curHex(m){const b=m.userData.box;return $('bTHM').classList.contains('o
 
 $('load').style.display='none'; $('hud').style.display='block'; $('legend').style.display='block';
 $('stat').innerHTML=`pts ${N.toLocaleString()} · objects 58<br>UTM origin ${ox.toFixed(0)} E ${oy.toFixed(0)} N<br>relief ${sz.toFixed(1)} m · grid 100 m · N→arrow`;
+if(viewObs){ $('vstxt').innerHTML=`OP on <b>${viewObs.observer_label}</b> · eye ${viewObs.observer_world[2].toFixed(0)} m<br>range ${viewObs.params.range_m} m · arc ${viewObs.params.arc_deg}°<br><b>${viewObs.pct_points_visible}%</b> of scene seen · ${viewObs.cells_visible.toLocaleString()} cells`; }
 
 addEventListener('resize',()=>{cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
 (function loop(){requestAnimationFrame(loop);ctrl.update();renderer.render(scene,cam);})();
