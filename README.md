@@ -25,8 +25,15 @@ Docs:
 │   │   ├── terrain.py    #   DSM from cloud + boxes as occluders (build/dsm.tif)
 │   │   ├── visibility.py #   line-of-sight viewshed (build/viewshed.*)
 │   │   └── scripts/      #   inspect_ply.py (data sanity-check)
-│   └── frontend/         # interactive 3D viewer (three.js via CDN, single file)
-│       └── index.html
+│   └── frontend/         # React + Vite + three.js tactical UI (modern, polished)
+│       ├── src/
+│       │   ├── app/      #   layout (AppContent.tsx)
+│       │   ├── components/ # SceneViewer, ControlPanel, ThreatPanel, LayerStack
+│       │   ├── contexts/ #   ViewerContext (state)
+│       │   ├── hooks/    #   useScene (data loading)
+│       │   └── lib/      #   api.ts, types.ts, colors.ts, utils.ts
+│       ├── package.json  #   React, Vite, three.js, TailwindCSS
+│       └── index.html    #   vite entry
 ├── build/                # generated layers (DSM/viewshed) — gitignored
 ├── docs/                 # challenge brief + data findings
 ├── pyproject.toml        # uv / hatchling project (ruff configured)
@@ -43,11 +50,17 @@ uv sync
 #    data/point_cloud.ply
 #    data/bounding_boxes.json
 
-# 3. (optional) build the viewshed overlay shown in the viewer
-uv run python src/backend/visibility.py   # writes build/viewshed.*
+# 3. install frontend deps (npm)
+cd src/frontend && npm install && cd ../..
 
-# 4. serve the 3D viewer (FastAPI packs the cloud on startup)
-./run.sh                 # http://localhost:8011 (high-res ~3.9M points)
+# 4. start both backend + frontend with one command
+./run.sh
+
+# Then open http://localhost:5173 in your browser
+# (Ctrl-C stops both servers)
+
+# 5. (optional) build the viewshed overlay shown in the viewer
+uv run python src/backend/visibility.py   # writes build/viewshed.*
 ```
 
 Then open <http://localhost:8011>. Inspect the raw cloud any time with:

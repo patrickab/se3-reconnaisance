@@ -1,19 +1,22 @@
-"""FastAPI backend: pack the point cloud once on startup, serve it + the viewer.
+"""FastAPI backend: pack the point cloud once on startup, serve it as an API.
 
     uv run uvicorn src.backend.app:app --port 8011      (or ./run.sh)
 
-Endpoints: GET /  (viewer) · /api/meta · /api/cloud (binary) · /api/boxes
-           /api/viewshed (binary) · /api/viewshed-info  — present only after
-           `uv run python src/backend/visibility.py` writes them to build/.
+The UI is served separately by Vite (src/frontend). Endpoints:
+  /api/meta · /api/cloud (binary) · /api/boxes
+  /api/viewshed (binary) · /api/viewshed-info  — present only after
+  `uv run python src/backend/visibility.py` writes them to build/.
 """
 
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from fastapi import FastAPI, Response
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 import numpy as np
 
@@ -25,9 +28,10 @@ if TYPE_CHECKING:
 ROOT = Path(__file__).resolve().parents[2]
 DATA = ROOT / "data"
 BUILD = ROOT / "build"          # viewshed.{bin,json} land here (gitignored)
-FRONTEND = ROOT / "src" / "frontend"
-VOXEL = 0.1                     # metres per voxel → ~4M point density
-MAX_POINTS = 3_900_000          # capture nearly all of the original cloud
+
+CONFIG = json.loads((ROOT / "src" / "config.json").read_text())  # shared with frontend
+VOXEL = CONFIG["cloud"]["voxel_m"]          # metres per voxel
+MAX_POINTS = CONFIG["cloud"]["max_points"]  # cap on served points
 
 PACK: dict = {}  # {"bin": bytes, "meta": {...}} filled on startup
 
@@ -72,6 +76,15 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(lifespan=lifespan)
 
+# Dev convenience: allow the Vite dev server to hit the API directly too.
+_fe = CONFIG["frontend"]["port"]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[f"http://localhost:{_fe}", f"http://127.0.0.1:{_fe}"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 @app.get("/api/meta")
 def meta() -> dict:
@@ -102,8 +115,3 @@ def viewshed_info() -> Response:
     if not f.exists():
         return Response(status_code=404)
     return FileResponse(f, media_type="application/json")
-
-
-@app.get("/")
-def index() -> FileResponse:
-    return FileResponse(FRONTEND / "index.html")

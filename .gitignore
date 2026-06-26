@@ -9,9 +9,11 @@ data/**/*.ply
 data/**/*.json
 *__pycache__*
 
-# ---- generated web assets (rebuild: ./run.sh prep) ----
-src/frontend/public/*
-!src/frontend/public/.gitkeep
+# ---- frontend (node + build output) ----
+src/frontend/node_modules/
+src/frontend/dist/
+src/frontend/.env.local
+src/frontend/.env*.local
 
 # ---- rendered figures / screenshots (derived from the data — keep out of git) ----
 docs/figures/
@@ -26,8 +28,8 @@ __pycache__/
 .ruff_cache/
 .pytest_cache/
 *.egg-info/
-build/
-dist/
+build/          # backend generated (DSM, viewshed, etc)
+dist/           # Python package dist
 uv.lock
 
 # ---- tooling / editor / os ----
@@ -37,3 +39,7 @@ uv.lock
 __MACOSX/
 .vscode/
 .idea/
+
+# stale tsc emits
+src/frontend/vite.config.js
+src/frontend/vite.config.d.ts

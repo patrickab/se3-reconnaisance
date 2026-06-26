@@ -1,0 +1,23 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-tactical-bg text-tactical-text;
+  }
+
+  button {
+    @apply transition-colors duration-150;
+  }
+}
+
+@layer components {
+  .panel {
+    @apply bg-black/50 border border-tactical-border rounded-lg backdrop-blur-sm;
+  }
+
+  .hud-text {
+    @apply font-mono text-xs;
+  }
+}

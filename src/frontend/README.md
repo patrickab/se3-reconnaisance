@@ -1,30 +1,75 @@
-# Frontend — 3D viewer
+# SE3 Tactical Intelligence — Frontend
 
-Interactive viewer for the point cloud + semantic object boxes. Static
-`index.html` (three.js via CDN) — no build step.
+Modern React + Vite application for battlefield intelligence visualization.
 
-## Run
+## Stack
+
+- **React 18** + **TypeScript** — component framework
+- **Vite** — build tool (instant HMR, fast builds)
+- **TresJS** → three.js — 3D scene
+- **Radix UI** — accessible headless components
+- **TailwindCSS** — styling, dark theme
+- **Zustand** (ready to add) — global state
+
+## Development
 
 ```bash
-./run.sh                 # http://localhost:8011 (FastAPI serves viewer + data)
+# Install deps
+npm install
+
+# Start dev server (HMR at localhost:5173, proxies /api to :8011)
+npm run dev
+
+# Build for production
+npm run build
+
+# Preview built app
+npm run preview
 ```
 
-The FastAPI backend packs the cloud on startup and serves it — no separate build
-step, no generated `public/`. Data fetched from `api/{meta,cloud,boxes}`, and the
-viewshed overlay from `api/viewshed{,-info}` when present.
+## Architecture
 
-## Controls
+```
+src/
+├── app/
+│   ├── AppContent.tsx    (main layout)
+│   └── layout.css
+├── components/           (React components)
+│   ├── SceneViewer.tsx   (three.js canvas)
+│   ├── ControlPanel.tsx  (UI controls)
+│   ├── ThreatPanel.tsx   (threat details)
+│   └── LayerStack.tsx    (layer toggles)
+├── contexts/            (React Context for state)
+│   └── ViewerContext.tsx
+├── hooks/               (custom hooks)
+│   └── useScene.ts      (load scene data)
+├── lib/
+│   ├── api.ts           (FastAPI fetch calls)
+│   ├── types.ts         (TypeScript interfaces)
+│   ├── colors.ts        (tactical palette)
+│   └── utils.ts         (helpers)
+├── App.tsx              (root)
+└── main.tsx             (entry)
+```
 
-- **drag** orbit · **scroll** zoom · **right-drag** pan · **click a box** → details
-- **points:** RGB / height-coloured / **viewshed** · **objects:** colour by class / by thermal
-- per-class show/hide (legend), point size, box-fill opacity, edges/cloud toggles
-- true 1:1 scale (no vertical exaggeration), 100 m grid, north arrow
-- **viewshed** mode (red = seen by enemy OP, green = dead ground) needs
-  `uv run python src/backend/visibility.py` first; otherwise the button is disabled
+## Features
 
-## Notes
+- **Real-time 3D viewer** — point cloud + semantic boxes, true 1:1 scale
+- **Multiple colormodes** — RGB / height / viewshed overlay
+- **Layer toggles** — show/hide cloud, boxes, viewshed
+- **Threat details** — click boxes to inspect
+- **Keyboard shortcuts** — V=viewshed, L=layers, T=threats
+- **Dark tactical UI** — command center aesthetic
 
-- Coordinates are recentered to a local origin (served in `api/meta`; UTM doubles
-  exceed float32 precision, so the browser works in metres from that origin).
-- Frame mapping: east → X, elevation → Y (up), north → −Z.
-- three.js is loaded from a CDN, so the browser needs internet on first load.
+## Next Steps
+
+- [ ] TresJS integration (Vue wrapper, replace three.js direct calls)
+- [ ] Keyboard handler hook (useKeyboard)
+- [ ] Threat placement UI
+- [ ] Route visualization
+- [ ] Risk map heatmap overlay
+- [ ] Go/No-Go readout panel
+
+## Env
+
+`VITE_API_URL` — FastAPI base URL (default: localhost:8011)
