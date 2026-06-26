@@ -75,10 +75,10 @@ import * as THREE from 'three';
 import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
 
 // ---- load data ----
-const meta = await (await fetch('public/meta.json')).json();
-const boxes = await (await fetch('public/bounding_boxes.json')).json();
+const meta = await (await fetch('api/meta')).json();
+const boxes = await (await fetch('api/boxes')).json();
 const N = meta.n, [sx,sy,sz] = meta.span, [ox,oy,oz] = meta.origin;
-const buf = await (await fetch('public/cloud.bin')).arrayBuffer();
+const buf = await (await fetch('api/cloud')).arrayBuffer();
 const pos = new Float32Array(buf, 0, N*3);
 const rgb = new Uint8Array(buf, N*3*4, N*3);
 
@@ -106,8 +106,9 @@ for(let i=0;i<N;i++){const c=turbo((heights[i]-zmin)/(zmax-zmin));colHGT[i*3]=c[
 // ---- viewshed overlay (optional layer produced by src/backend/visibility.py) ----
 let viewObs=null, colVIS=null;
 try{
-  viewObs = await (await fetch('public/viewshed.json')).json();
-  const vbuf = new Uint8Array(await (await fetch('public/viewshed.bin')).arrayBuffer());
+  const vr = await fetch('api/viewshed-info'); if(!vr.ok) throw 0;
+  viewObs = await vr.json();
+  const vbuf = new Uint8Array(await (await fetch('api/viewshed')).arrayBuffer());
   colVIS = new Float32Array(N*3);
   for(let i=0;i<N;i++){
     if(vbuf[i]){ colVIS[i*3]=1.0; colVIS[i*3+1]=0.18; colVIS[i*3+2]=0.18; }   // red = seen by OP

@@ -19,15 +19,18 @@ Docs:
 │   ├── point_cloud.ply   #   ~4M-point cloud, XYZ (UTM, metres) + RGB
 │   └── bounding_boxes.json#   58 oriented object boxes + thermal signature
 ├── src/
-│   ├── backend/          # Python: data IO + processing + (soon) tactical analysis
+│   ├── backend/          # Python: data IO + FastAPI server + tactical analysis
 │   │   ├── io.py         #   PLY reader (memmap, zero-copy)
-│   │   └── scripts/      #   runnable tools (inspect / prepare web / render)
-│   └── frontend/         # interactive 3D viewer (three.js, static)
-│       ├── index.html
-│       └── public/       #   generated assets — gitignored (./run.sh prep)
+│   │   ├── app.py        #   FastAPI: packs cloud on startup, serves viewer + data
+│   │   ├── terrain.py    #   DSM from cloud + boxes as occluders (build/dsm.tif)
+│   │   ├── visibility.py #   line-of-sight viewshed (build/viewshed.*)
+│   │   └── scripts/      #   inspect_ply.py (data sanity-check)
+│   └── frontend/         # interactive 3D viewer (three.js via CDN, single file)
+│       └── index.html
+├── build/                # generated layers (DSM/viewshed) — gitignored
 ├── docs/                 # challenge brief + data findings
 ├── pyproject.toml        # uv / hatchling project (ruff configured)
-└── run.sh                # ./run.sh prep | serve
+└── run.sh                # ./run.sh → uvicorn at :8011
 ```
 
 ## Quickstart
@@ -40,11 +43,11 @@ uv sync
 #    data/point_cloud.ply
 #    data/bounding_boxes.json
 
-# 3. build the web viewer assets from the cloud
-./run.sh prep            # downsample + pack -> src/frontend/public/
+# 3. (optional) build the viewshed overlay shown in the viewer
+uv run python src/backend/visibility.py   # writes build/viewshed.*
 
-# 4. serve the 3D viewer
-./run.sh serve           # http://localhost:8011
+# 4. serve the 3D viewer (FastAPI packs the cloud on startup)
+./run.sh                 # http://localhost:8011 (high-res ~3.9M points)
 ```
 
 Then open <http://localhost:8011>. Inspect the raw cloud any time with:
@@ -55,10 +58,12 @@ uv run python src/backend/scripts/inspect_ply.py
 
 ## The viewer
 
-True 1:1 scale (no vertical exaggeration). Point cloud (RGB / height-coloured)
-with all 58 oriented object boxes overlaid — colour by **class** or by
-**thermal** signature, per-class show/hide, click any box for its
+True 1:1 scale (no vertical exaggeration). Point cloud (RGB / height-coloured /
+**viewshed**) with all 58 oriented object boxes overlaid — colour by **class** or
+by **thermal** signature, per-class show/hide, click any box for its
 dimensions / temperature / UTM position. North arrow + 100 m grid for scale.
+**Viewshed** mode (after running `visibility.py`) paints points red = seen by the
+enemy OP, green = dead ground, with the observer marker + range ring.
 
 ## Status / roadmap
 
@@ -69,9 +74,9 @@ observer sees you). See the two tactical docs above.
 
 - [x] Data ingest + inspection, web 3D viewer with semantic objects + thermal
 - [x] Tactical concept: threat library (Red) + maneuver analysis (Blue)
-- [x] **Slice 1 — viewshed / line-of-sight engine** (DSM + the 58 box occluders),
-      with the seen / dead-ground overlay in the viewer
-- [ ] Derived vegetation mask from the cloud (concealment, to complement box cover)
+- [x] Terrain DSM from the cloud + the 58 boxes as occluders (`terrain.py`)
+- [x] **Viewshed / line-of-sight engine** (`visibility.py`) + 3D overlay — core
+- [ ] Vegetation / concealment layer from the cloud (cover vs concealment)
 - [ ] `data/enemy_assets.json` schema + place Red assets in the viewer
 - [ ] Slice 2 — FastAPI endpoint → live "drop a pin" viewshed
 - [ ] Threat maps: combined observation `O`, direct-fire `D`, indirect `I`
@@ -82,4 +87,4 @@ observer sees you). See the two tactical docs above.
 ## Team
 
 Data lives outside git — share the two files directly. Work on feature branches
-off `main`; the viewer needs only `./run.sh prep` after you drop the data in.
+off `main`; the viewer needs only `./run.sh` after you drop the data in.

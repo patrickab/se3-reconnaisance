@@ -1,0 +1,109 @@
+"""FastAPI backend: pack the point cloud once on startup, serve it + the viewer.
+
+    uv run uvicorn src.backend.app:app --port 8011      (or ./run.sh)
+
+Endpoints: GET /  (viewer) · /api/meta · /api/cloud (binary) · /api/boxes
+           /api/viewshed (binary) · /api/viewshed-info  — present only after
+           `uv run python src/backend/visibility.py` writes them to build/.
+"""
+
+from __future__ import annotations
+
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+from fastapi import FastAPI, Response
+from fastapi.responses import FileResponse
+import numpy as np
+
+from src.backend.io import read_ply
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
+ROOT = Path(__file__).resolve().parents[2]
+DATA = ROOT / "data"
+BUILD = ROOT / "build"          # viewshed.{bin,json} land here (gitignored)
+FRONTEND = ROOT / "src" / "frontend"
+VOXEL = 0.1                     # metres per voxel → ~4M point density
+MAX_POINTS = 3_900_000          # capture nearly all of the original cloud
+
+PACK: dict = {}  # {"bin": bytes, "meta": {...}} filled on startup
+
+
+def pack_cloud(ply: Path, voxel: float, max_points: int) -> dict:
+    """Voxel-downsample to one point per occupied cell, recenter to a local origin.
+
+    UTM doubles exceed float32 precision, so positions are stored relative to the
+    min corner; the viewer works in metres from that origin. Layout of "bin":
+    N float32 positions (xyz) followed by N uint8 colours (rgb).
+    """
+    v = read_ply(ply)
+    x, y, z = (np.asarray(v[c]) for c in ("x", "y", "z"))
+    r, g, b = (np.asarray(v[c]) for c in ("red", "green", "blue"))
+    ox, oy, oz = float(x.min()), float(y.min()), float(z.min())
+
+    vi = ((x - ox) / voxel).astype(np.uint64)
+    vj = ((y - oy) / voxel).astype(np.uint64)
+    vk = ((z - oz) / voxel).astype(np.uint64)
+    _, sel = np.unique((vi << 42) | (vj << 21) | vk, return_index=True)  # one per voxel
+    if sel.size > max_points:
+        sel = np.sort(np.random.default_rng(0).choice(sel, max_points, replace=False))
+
+    pos = np.empty((sel.size, 3), np.float32)
+    pos[:, 0], pos[:, 1], pos[:, 2] = x[sel] - ox, y[sel] - oy, z[sel] - oz
+    col = np.empty((sel.size, 3), np.uint8)
+    col[:, 0], col[:, 1], col[:, 2] = r[sel], g[sel], b[sel]
+
+    return {
+        "bin": pos.tobytes() + col.tobytes(),
+        "meta": {"n": int(sel.size), "origin": [ox, oy, oz],
+                 "span": [float(x.max() - ox), float(y.max() - oy), float(z.max() - oz)]},
+    }
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    PACK.update(pack_cloud(DATA / "point_cloud.ply", VOXEL, MAX_POINTS))
+    print(f"packed {PACK['meta']['n']:,} pts @ {VOXEL} m/voxel")
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
+
+
+@app.get("/api/meta")
+def meta() -> dict:
+    return PACK["meta"]
+
+
+@app.get("/api/cloud")
+def cloud() -> Response:
+    return Response(PACK["bin"], media_type="application/octet-stream")
+
+
+@app.get("/api/boxes")
+def boxes() -> FileResponse:
+    return FileResponse(DATA / "bounding_boxes.json", media_type="application/json")
+
+
+@app.get("/api/viewshed")
+def viewshed_bin() -> Response:
+    f = BUILD / "viewshed.bin"
+    if not f.exists():
+        return Response(status_code=404)
+    return Response(f.read_bytes(), media_type="application/octet-stream")
+
+
+@app.get("/api/viewshed-info")
+def viewshed_info() -> Response:
+    f = BUILD / "viewshed.json"
+    if not f.exists():
+        return Response(status_code=404)
+    return FileResponse(f, media_type="application/json")
+
+
+@app.get("/")
+def index() -> FileResponse:
+    return FileResponse(FRONTEND / "index.html")

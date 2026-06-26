@@ -1,26 +1,36 @@
 # Backend
 
-Python data IO, processing, and (incoming) tactical-analysis code.
+Python data IO, the API server, and the tactical-analysis layer.
 
 - `io.py` — zero-copy PLY reader (`read_ply` → numpy structured memmap).
-- `scripts/` — runnable tools:
-  - `inspect_ply.py` — print header + statistics (sanity-check the data)
-  - `prepare_web.py` — downsample + pack the cloud for the viewer
-  - `render_rasters.py` — top-down ortho / DSM layers (→ `docs/figures/`)
+- `app.py` — FastAPI app: voxel-downsamples + packs the cloud on startup (in RAM,
+  via `pack_cloud`), serves the viewer at `/` and `api/{meta,cloud,boxes}`, plus
+  `api/viewshed{,-info}` when present. High-resolution default (0.1 m/voxel,
+  ~3.9M points).
+- `terrain.py` — build the DSM from the cloud, stamp the 58 boxes as occluders,
+  save a georeferenced GeoTIFF (`build/dsm.tif`). The height grid everything runs on.
+- `visibility.py` — radial line-of-sight viewshed from an observer. Writes
+  `build/viewshed.{tif,bin,json}`; the `.bin/.json` use `pack_cloud`'s exact points
+  so the per-point overlay aligns with what the viewer serves.
+- `scripts/inspect_ply.py` — print header + statistics (sanity-check the data).
 
 ## Setup
 
 ```bash
-uv sync                  # installs numpy, matplotlib, pillow
-uv run python src/backend/scripts/inspect_ply.py
+uv sync                  # numpy · fastapi · uvicorn · rasterio · shapely · scipy
+uv run python src/backend/visibility.py     # optional: build the viewshed overlay
+./run.sh                 # serve at http://localhost:8011
+uv run python src/backend/scripts/inspect_ply.py   # sanity-check the data
 ```
 
-## Roadmap (tactical layer goes here)
+Generated layers land in `build/` (gitignored). The viewer's **viewshed** mode
+lights up once `visibility.py` has run; otherwise that button stays disabled.
 
-Track-1 analysis modules to add next, all sharing one visibility primitive:
+## Roadmap (tactical layer continues here)
 
-- `terrain.py` — derive ground surface + vegetation mask from the cloud
-- `visibility.py` — viewshed / line-of-sight on terrain + the 58 object occluders
+Built so far: `terrain.py` (DSM) + `visibility.py` (viewshed). Next, all sharing
+the visibility primitive:
+
 - `fields.py` — field-of-fire score, exposure / concealment map, dead ground
 - `routes.py` — least-cost approach paths (slope + traversability + exposure)
 

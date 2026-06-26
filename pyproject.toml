@@ -5,8 +5,8 @@ description = "Tactical AI layer on SE3's 3D battlefield reconstruction (EDTH Mu
 requires-python = ">=3.12"
 dependencies = [
     "numpy>=2.0",
-    "matplotlib>=3.8",
-    "pillow>=10.0",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
     "rasterio>=1.4",
     "shapely>=2.0",
     "scipy>=1.13",
@@ -47,7 +47,7 @@ ignore = [
 
 [tool.ruff.lint.isort]
 force-sort-within-sections = true
-section-order = ["standard-library", "third-party", "first-party", "local-folder"]
+section-order = ["future", "standard-library", "third-party", "first-party", "local-folder"]
 
 # Enables Ruff formatter with default options (Black-compatible)
 [tool.ruff.format]

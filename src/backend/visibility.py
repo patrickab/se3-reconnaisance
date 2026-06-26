@@ -10,8 +10,9 @@ closer. This is surface-accurate 2.5D visibility — honestly not volumetric.
 
     uv run python src/backend/visibility.py [--box 36_house] [--range 1200] [--arc 360]
 
-Outputs: build/viewshed.tif (georeferenced) + src/frontend/public/viewshed.{bin,json}
-(per web-cloud-point seen/not flag + observer, for the viewer overlay).
+Outputs: build/viewshed.tif (georeferenced) + build/viewshed.{bin,json}
+(per web-cloud-point seen/not flag + observer; served by the FastAPI app at
+/api/viewshed{,-info} for the viewer overlay).
 """
 
 from __future__ import annotations
@@ -26,9 +27,8 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
+from src.backend.app import MAX_POINTS, VOXEL, pack_cloud  # noqa: E402
 from src.backend.terrain import BUILD, DATA, build_dsm, save_geotiff, world_to_pixel  # noqa: E402
-
-PUBLIC = ROOT / "src" / "frontend" / "public"
 
 
 def viewshed(dsm: np.ndarray, transform, res: float, obs_xy: tuple[float, float],
@@ -125,12 +125,14 @@ def main() -> None:
 
     save_geotiff(vis.astype("uint8"), t["transform"], t["epsg"], BUILD / "viewshed.tif", dtype="uint8")
 
-    # sample per web-cloud-point for the viewer overlay
-    meta = json.loads((PUBLIC / "meta.json").read_text())
+    # sample per web-cloud-point for the viewer overlay. Pack the exact same points
+    # the FastAPI viewer serves (same fn + defaults => identical indices, aligned overlay).
+    pack = pack_cloud(DATA / "point_cloud.ply", VOXEL, MAX_POINTS)
+    meta = pack["meta"]
     ox, oy, oz = meta["origin"]
     sx, sy, sz = meta["span"]
     n = meta["n"]
-    buf = np.frombuffer((PUBLIC / "cloud.bin").read_bytes(), dtype=np.float32, count=n * 3).reshape(n, 3)
+    buf = np.frombuffer(pack["bin"], dtype=np.float32, count=n * 3).reshape(n, 3)
     wx = buf[:, 0] + ox
     wy = buf[:, 1] + oy
     tr = t["transform"]
@@ -140,7 +142,8 @@ def main() -> None:
     ok = (cols >= 0) & (cols < w) & (rows >= 0) & (rows < h)
     flags = np.zeros(n, dtype=np.uint8)
     flags[ok] = vis[rows[ok], cols[ok]]
-    (PUBLIC / "viewshed.bin").write_bytes(flags.tobytes())
+    BUILD.mkdir(parents=True, exist_ok=True)
+    (BUILD / "viewshed.bin").write_bytes(flags.tobytes())
 
     obs_eye_world = (obs_xy[0], obs_xy[1], eye)
     info = {
@@ -153,12 +156,12 @@ def main() -> None:
         "pct_points_visible": round(100 * flags.mean(), 1),
         "cells_visible": int(vis.sum()),
     }
-    (PUBLIC / "viewshed.json").write_text(json.dumps(info))
+    (BUILD / "viewshed.json").write_text(json.dumps(info))
 
     print(f"observer: {obs_label} @ {obs_eye_world[0]:.0f} E {obs_eye_world[1]:.0f} N, eye {eye:.1f} m")
     print(f"range {args.max_range:.0f} m, arc {args.arc:.0f}°  | visible cells {vis.sum():,} "
           f"| {info['pct_points_visible']}% of cloud points seen")
-    print(f"wrote {BUILD/'viewshed.tif'} + {PUBLIC/'viewshed.bin'} + viewshed.json")
+    print(f"wrote {BUILD/'viewshed.tif'} + {BUILD/'viewshed.bin'} + viewshed.json")
 
 
 if __name__ == "__main__":
