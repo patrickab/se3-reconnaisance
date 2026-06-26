@@ -22,17 +22,13 @@ does the enemy see from that building, and where am I exposed?
 > vegetation). Approach routes = least-cost paths where cost = slope +
 > traversability + **exposure to overwatch** (which loops back into visibility).
 
-**Track 2 — Live Scene Intelligence.** Two passes hours apart: find what changed
-and ignore what didn't. Real change is **geometry** (vehicle moved, earth dug);
-noise is **appearance** (shadow, sway, lighting). *Requires a second pass — see
-DATA.md; we currently have one.*
-
 ## Judging (EDTH)
 
-1. Real problem? 2. Effective? 3. Original? 4. Deployable / mass-manufacturable?
-5. Progress & drive **during** the event. → A working live demo beats slides; an
-honest "here's where it breaks" beats over-claiming. Output must be
-**operator-actionable in < 10 seconds**.
+1. Real problem?
+2. Effective?
+3. Original?
+4. Deployable / mass-manufacturable?
+5. Progress & drive **during** the event. → A working live demo beats slides; an honest "here's where it breaks" beats over-claiming. Output must be **operator-actionable in < 10 seconds**.
 
 ## Our direction
 
@@ -49,6 +45,3 @@ The full Track-1 concept — placing a realistic Russian threat laydown and
 computing the friendly course of action against it — is in
 [THREAT_LIBRARY.md](THREAT_LIBRARY.md) (Red assets) and
 [MANEUVER_ANALYSIS.md](MANEUVER_ANALYSIS.md) (Blue movement).
-
-Open questions for the mentor; the two that gate everything: *is there a second
-pass?* and *what does a "good" < 10 s output look like to you?*
