@@ -1,9 +1,12 @@
 [project]
-name = "template"
+name = "se3-reconnaissance"
 version = "0.1.0"
+description = "Tactical AI layer on SE3's 3D battlefield reconstruction (EDTH Munich)"
 requires-python = ">=3.12"
 dependencies = [
-    "something>=4.2.0"
+    "numpy>=2.0",
+    "matplotlib>=3.8",
+    "pillow>=10.0",
 ]
 
 [build-system]

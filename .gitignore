@@ -1,0 +1,38 @@
+# ---- provided data (large / sensitive — get from the SE3 mentor, never commit) ----
+data/*.ply
+data/*.json
+data/*.pcd
+data/*.las
+data/*.laz
+data/*.bag
+data/**/*.ply
+data/**/*.json
+
+# ---- generated web assets (rebuild: ./run.sh prep) ----
+src/frontend/public/*
+!src/frontend/public/.gitkeep
+
+# ---- rendered figures / screenshots (derived from the data — keep out of git) ----
+docs/figures/
+*.png
+*.jpg
+
+# ---- python / uv ----
+.venv/
+venv/
+__pycache__/
+*.pyc
+.ruff_cache/
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+uv.lock
+
+# ---- tooling / editor / os ----
+.claude/
+.playwright-mcp/
+.DS_Store
+__MACOSX/
+.vscode/
+.idea/
