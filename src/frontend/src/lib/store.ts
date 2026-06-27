@@ -14,6 +14,7 @@ interface AppState {
   error: string | null
 
   colorMode: ColorMode
+  overlayOnRgb: boolean
   layers: Layers
   classVisibility: ClassVisibility
   selected: BoundingBox | null
@@ -25,6 +26,7 @@ interface AppState {
   setReady: (r: { viewshedReady: boolean; threatReady: boolean; fieldsReady: boolean }) => void
   setError: (error: string) => void
   setColorMode: (colorMode: ColorMode) => void
+  setOverlayOnRgb: (overlayOnRgb: boolean) => void
   toggleLayer: (key: LayerKey) => void
   toggleClass: (key: BoxClass) => void
   select: (selected: BoundingBox | null, selectedPoint?: ScreenPoint | null) => void
@@ -52,6 +54,7 @@ export const useStore = create<AppState>((set) => ({
   error: null,
 
   colorMode: 'rgb',
+  overlayOnRgb: false,
   layers: { points: true, boxes: true, observer: true, threats: true },
   classVisibility: DEFAULT_CLASS_VISIBILITY,
   selected: null,
@@ -63,6 +66,7 @@ export const useStore = create<AppState>((set) => ({
   setReady: ({ viewshedReady, threatReady, fieldsReady }) => set({ viewshedReady, threatReady, fieldsReady }),
   setError: (error) => set({ error, loading: false }),
   setColorMode: (colorMode) => set({ colorMode }),
+  setOverlayOnRgb: (overlayOnRgb) => set({ overlayOnRgb }),
   toggleLayer: (key) => set((s) => ({ layers: { ...s.layers, [key]: !s.layers[key] } })),
   toggleClass: (key) => set((s) => ({ classVisibility: { ...s.classVisibility, [key]: !s.classVisibility[key] } })),
   select: (selected, selectedPoint = null) => set({ selected, selectedPoint, selectedThreat: null }),

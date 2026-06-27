@@ -50,6 +50,9 @@ export class Viewer {
   private boxTempMin = 0
   private boxTempMax = 1
   private colorMode: ColorMode = 'rgb'
+  private overlayOnRgb = false
+  private colRGBArr?: Float32Array   // linear RGB base, for blending overlays onto the real map
+  private blendBuf?: Float32Array
 
   constructor(private canvas: HTMLCanvasElement) {
     this.scene.background = new THREE.Color(0x080c10)
@@ -131,6 +134,7 @@ export class Viewer {
 
     this.colors.rgb = new THREE.BufferAttribute(colRGB, 3)
     this.colors.height = new THREE.BufferAttribute(colHGT, 3)
+    this.colRGBArr = colRGB
     if (vsFlags) {
       const colVS = new Float32Array(n * 3)
       for (let i = 0; i < n; i++) {
@@ -205,12 +209,48 @@ export class Viewer {
 
   setColorMode(mode: ColorMode) {
     this.colorMode = mode
-    const attr = this.colors[mode] ?? this.colors.rgb
+    const blended = this.overlayOnRgb ? this.blendedOverlay(mode) : null
+    const attr = blended ?? this.colors[mode] ?? this.colors.rgb
     if (this.points && attr) {
       this.points.geometry.setAttribute('color', attr)
       attr.needsUpdate = true
     }
     this.updateBoxColors()
+  }
+
+  setOverlayOnRgb(on: boolean) {
+    this.overlayOnRgb = on
+    this.setColorMode(this.colorMode)
+  }
+
+  // Composite a threat overlay over the real photographic colours: out = rgb*(1-a) + tint*a,
+  // where the tint's strength (a) scales with how "hot" the cell is. Lets you read the
+  // danger/kill-zone/viewshed on the actual map instead of a flat heatmap. Null = no overlay
+  // for this mode (rgb/height/temperature), so the pure attribute is used.
+  private blendedOverlay(mode: ColorMode): THREE.BufferAttribute | null {
+    const flags = mode === 'viewshed' ? vsFlags : mode === 'threat' ? thFlags
+      : mode === 'danger' ? dgFlags : mode === 'depth' ? dpFlags : null
+    if (!flags || !this.colRGBArr) return null
+    const base = this.colRGBArr
+    const n = base.length / 3
+    if (!this.blendBuf) this.blendBuf = new Float32Array(n * 3)
+    const out = this.blendBuf
+    for (let i = 0; i < n; i++) {
+      let r = 0, g = 0, b = 0, a = 0
+      if (mode === 'viewshed') {
+        if (flags[i]) { r = 1; g = 0.18; b = 0.18; a = 0.6 } else { r = 0.12; g = 0.72; b = 0.4; a = 0.3 }
+      } else if (mode === 'depth') {
+        const d = Math.min(flags[i], DEPTH_PAL.length - 1)
+        const c = DEPTH_PAL[d]; r = c[0]; g = c[1]; b = c[2]; a = d === 0 ? 0 : Math.min(0.85, 0.45 + 0.12 * d)
+      } else { // threat / danger — turbo, strength = value
+        const v = flags[i] / 255
+        if (v >= 0.04) { const c = TURBO(v); r = c[0]; g = c[1]; b = c[2]; a = v * 0.85 }
+      }
+      out[i * 3] = base[i * 3] * (1 - a) + srgb2lin(r) * a
+      out[i * 3 + 1] = base[i * 3 + 1] * (1 - a) + srgb2lin(g) * a
+      out[i * 3 + 2] = base[i * 3 + 2] * (1 - a) + srgb2lin(b) * a
+    }
+    return new THREE.BufferAttribute(out, 3)
   }
 
   setLayer(key: LayerKey, visible: boolean) {

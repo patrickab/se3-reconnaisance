@@ -24,6 +24,8 @@ const MODES: { key: ColorMode; label: string; needs?: 'viewshed' | 'threat' | 'f
 export default function Hud() {
   const [collapsed, setCollapsed] = useState(false)
   const { meta, boxes, colorMode, setColorMode, layers, toggleLayer, classVisibility, toggleClass } = useStore()
+  const overlayOnRgb = useStore((s) => s.overlayOnRgb)
+  const setOverlayOnRgb = useStore((s) => s.setOverlayOnRgb)
   const viewshedReady = useStore((s) => s.viewshedReady)
   const threatReady = useStore((s) => s.threatReady)
   const fieldsReady = useStore((s) => s.fieldsReady)
@@ -91,6 +93,15 @@ export default function Hud() {
                 )
               })}
               </div>
+              <label className="mt-1.5 flex cursor-pointer items-center justify-between gap-2 text-[10px] text-tactical-secondary hover:text-tactical-text">
+                <span>over RGB map</span>
+                <input
+                  type="checkbox"
+                  checked={overlayOnRgb}
+                  onChange={(e) => setOverlayOnRgb(e.target.checked)}
+                  className="h-3 w-3 accent-tactical-accent"
+                />
+              </label>
             </div>
 
             <div className="mt-2 border-t border-tactical-border/60 pt-2">

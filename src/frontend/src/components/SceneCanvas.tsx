@@ -8,6 +8,7 @@ export default function SceneCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const viewerRef = useRef<Viewer | null>(null)
   const colorMode = useStore((s) => s.colorMode)
+  const overlayOnRgb = useStore((s) => s.overlayOnRgb)
   const layers = useStore((s) => s.layers)
   const classVisibility = useStore((s) => s.classVisibility)
   const selected = useStore((s) => s.selected)
@@ -50,6 +51,10 @@ export default function SceneCanvas() {
   useEffect(() => {
     viewerRef.current?.setColorMode(colorMode)
   }, [colorMode])
+
+  useEffect(() => {
+    viewerRef.current?.setOverlayOnRgb(overlayOnRgb)
+  }, [overlayOnRgb])
 
   useEffect(() => {
     const v = viewerRef.current
