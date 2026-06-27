@@ -18,6 +18,7 @@ export default function SceneCanvas() {
   const layers = useStore((s) => s.layers)
   const classVisibility = useStore((s) => s.classVisibility)
   const selected = useStore((s) => s.selected)
+  const selectedUnitId = useStore((s) => s.selectedUnitId)
   const selectedCursor = useStore((s) => s.selectedCursor)
 
   useEffect(() => {
@@ -39,6 +40,7 @@ export default function SceneCanvas() {
     })
     viewer.onRemoveUnit((id) => useStore.getState().removeUnit(id))
     viewer.onPickPlacedUnit((id, cursor) => useStore.getState().selectUnit(id, cursor))
+    viewer.onReorientUnit((id, azimuth) => useStore.getState().reorientUnit(id, azimuth))
 
     ;(async () => {
       try {
@@ -96,6 +98,7 @@ export default function SceneCanvas() {
 
   useEffect(() => { viewerRef.current?.setClassVisibility(classVisibility) }, [classVisibility])
   useEffect(() => { viewerRef.current?.setSelected(selected?.id ?? null) }, [selected])
+  useEffect(() => { viewerRef.current?.setSelectedUnit(selectedUnitId) }, [selectedUnitId])
   useEffect(() => { viewerRef.current?.setCursorAnchor(selectedCursor?.world ?? null) }, [selectedCursor?.world])
 
   useEffect(() => {

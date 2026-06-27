@@ -1,4 +1,4 @@
-import { postRecompute, postReset } from '../lib/api'
+import { postRecompute, postReset, clearUnits } from '../lib/api'
 import { useStore } from '../lib/store'
 import { UnitType } from '../lib/types'
 
@@ -10,7 +10,8 @@ export default function FriendlyPanel() {
   const units = useStore((s) => s.units)
   const profiles = useStore((s) => s.unitProfiles)
   const scanning = useStore((s) => s.scanning)
-  const hasLaydown = useStore((s) => s.threatInfo !== null) // an analysed laydown is on the map
+  const viewcones = useStore((s) => s.layers.viewcones)
+  const toggleLayer = useStore((s) => s.toggleLayer)
   const setPlacing = useStore((s) => s.setPlacing)
   const setRemoving = useStore((s) => s.setRemoving)
   const setActiveSide = useStore((s) => s.setActiveSide)
@@ -45,11 +46,11 @@ export default function FriendlyPanel() {
     }
   }
 
-  // Wipe the analysed laydown so the battlefield goes blank again.
+  // Wipe all placed units + analysed laydown, then reload so scene is fully blank.
   const reset = async () => {
     setScanning(true)
     try {
-      await postReset()
+      await Promise.all([postReset(), clearUnits()])
       window.location.reload()
     } catch {
       setScanning(false)
@@ -105,14 +106,22 @@ export default function FriendlyPanel() {
       >
         {scanning ? 'analysing… ~15 s' : '▶ analyse threat'}
       </button>
-      {hasLaydown && (
-        <button
-          onClick={reset}
-          disabled={scanning}
-          className="mt-1.5 w-full border border-tactical-border px-2 py-1 text-[11px] text-tactical-secondary hover:text-tactical-text disabled:opacity-40"
-        >
-          ✕ clear battlefield
-        </button>
+      {units.length > 0 && (
+        <div className="mt-1.5 grid grid-cols-2 gap-1">
+          <button
+            onClick={() => toggleLayer('viewcones')}
+            className={`border px-2 py-1 text-[11px] ${viewcones ? 'border-tactical-secondary text-tactical-secondary' : 'border-tactical-border text-tactical-muted'}`}
+          >
+            {viewcones ? '◉ view fields' : '○ view fields'}
+          </button>
+          <button
+            onClick={reset}
+            disabled={scanning}
+            className="border border-tactical-border px-2 py-1 text-[11px] text-tactical-secondary hover:text-tactical-text disabled:opacity-40"
+          >
+            ✕ clear all
+          </button>
+        </div>
       )}
       <div className="mt-1.5 text-[9px] leading-snug text-tactical-muted">
         mark the enemy from your intel, then analyse — fields of fire, kill zones and danger are projected.

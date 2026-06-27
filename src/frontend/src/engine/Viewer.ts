@@ -13,14 +13,14 @@ const SIDC: Record<string, string> = {
   sniper_op: 'SHGPUCIS----',  // legacy key used by analyzed threat template
   sniper:    'SHGPUCIS----',
   tank:      'SHGPUCA-----',
-  ifv:       'SHGPUCAI----',
+  ifv:       'SHGPUCIZ----',  // mechanized/armored infantry (UCAI is not a valid SIDC → renders as ?)
   apc:       'SHGPUCI-----',
   assault:   'SHGPUCI-----',
   mortar:    'SHGPUCFM----',
   friendly:           'SFGPUCI-----',
   'friendly.sniper':  'SFGPUCIS----',
   'friendly.tank':    'SFGPUCA-----',
-  'friendly.ifv':     'SFGPUCAI----',
+  'friendly.ifv':     'SFGPUCIZ----',
   'friendly.apc':     'SFGPUCI-----',
   'friendly.assault': 'SFGPUCI-----',
   'friendly.mortar':  'SFGPUCFM----',
@@ -96,6 +96,7 @@ export class Viewer {
   private threatGroup = new THREE.Group()
   private friendlyGroup = new THREE.Group()
   private placedEnemyGroup = new THREE.Group()
+  private viewconesGroup = new THREE.Group()
   private enemyOrientGroup = new THREE.Group()
   private threatPickables: THREE.Object3D[] = []
   private pickCb: (box: BoundingBox | null, cursor?: SceneCursor) => void = () => {}
@@ -105,8 +106,12 @@ export class Viewer {
   private placeCb: (e: number, n: number, u: number, yaw_deg: number) => void = () => {}
   private placeEnemyCb: (e: number, n: number, u: number, yaw_deg: number) => void = () => {}
   private pendingEnemyPin: { vx: number; vy: number; vz: number; E: number; N: number; U: number } | null = null
+  private reorientPin: { unitId: string; vx: number; vy: number; vz: number; color: number } | null = null
+  private reorientCb: (id: string, azimuth: number) => void = () => {}
   private activeUnitType: UnitType = 'sniper'
   private placedUnitPickables: THREE.Object3D[] = []
+  private unitById = new Map<string, UnitContact>()
+  private selectedUnitId: string | null = null
   private removeUnitCb: (id: string) => void = () => {}
   private pickPlacedUnitCb: (id: string, cursor: SceneCursor) => void = () => {}
   private pickThreatCb: (p: ThreatPosition | null, point?: { x: number; y: number }) => void = () => {}
@@ -123,7 +128,7 @@ export class Viewer {
 
   constructor(private canvas: HTMLCanvasElement) {
     this.scene.background = new THREE.Color(0x080c10)
-    this.scene.add(this.boxGroup, this.observerGroup, this.threatGroup, this.friendlyGroup, this.placedEnemyGroup, this.enemyOrientGroup)
+    this.scene.add(this.boxGroup, this.observerGroup, this.threatGroup, this.friendlyGroup, this.placedEnemyGroup, this.viewconesGroup, this.enemyOrientGroup)
 
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' })
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2.5))
@@ -325,6 +330,7 @@ export class Viewer {
     // enemy markers now live in placedEnemyGroup (live /api/units); threatGroup holds only
     // the advance-axis arrow. "hide enemy markers" should hide the actual enemy markers.
     if (key === 'threats') { this.placedEnemyGroup.visible = visible; this.threatGroup.visible = visible }
+    if (key === 'viewcones') this.viewconesGroup.visible = visible
   }
 
   setClassVisibility(visibility: ClassVisibility) {
@@ -340,6 +346,16 @@ export class Viewer {
       const mat = mesh.material as THREE.MeshBasicMaterial
       mat.opacity = mesh.userData.id === id ? 0.55 : 0.2
     })
+  }
+
+  // Reveal a placed unit's full range ring/wedge only while it's selected.
+  setSelectedUnit(id: string | null) {
+    this.selectedUnitId = id
+    for (const g of [this.placedEnemyGroup, this.friendlyGroup]) {
+      for (const c of g.children) {
+        if (c.userData.selOnly) c.visible = c.userData.unitId === id
+      }
+    }
   }
 
   setViewshed(flags: Uint8Array, info: ViewshedInfo) {
@@ -402,6 +418,7 @@ export class Viewer {
 
   onRemoveUnit(cb: (id: string) => void) { this.removeUnitCb = cb }
   onPickPlacedUnit(cb: (id: string, cursor: SceneCursor) => void) { this.pickPlacedUnitCb = cb }
+  onReorientUnit(cb: (id: string, azimuth: number) => void) { this.reorientCb = cb }
 
   setEnemyMarkers(units: UnitContact[]) {
     this.placeContacts(units, 'hostile', this.placedEnemyGroup, 0xff2b2b)
@@ -417,9 +434,19 @@ export class Viewer {
    *  the same in the UI. */
   private placeContacts(units: UnitContact[], side: 'hostile' | 'friendly', group: THREE.Group, color: number) {
     this.clearGroup(group)
+    // also remove this side's cones from the shared viewconesGroup
+    for (const c of [...this.viewconesGroup.children]) {
+      if (c.userData.side === side) {
+        this.viewconesGroup.remove(c);
+        (c as THREE.Mesh).geometry?.dispose?.();
+        ((c as THREE.Mesh).material as THREE.Material)?.dispose?.()
+      }
+    }
     this.placedUnitPickables = this.placedUnitPickables.filter((p) => p.userData.side !== side)
+    for (const [id, u] of this.unitById) if (u.side === side) this.unitById.delete(id)
     if (!this.meta) return
     for (const unit of units) {
+      this.unitById.set(unit.id, unit)
       const [vx, vy, vz] = w2v(unit.world, this.meta.origin, this.meta.span)
       const top = vy + 26
       const icon = this.symbolSprite(sidcFor(unit), 15)
@@ -439,13 +466,23 @@ export class Viewer {
       ))
       ring.rotation.x = -Math.PI / 2
       ring.position.set(vx, vy + 0.3, vz)
-      const overlay = this.rangeOverlay(vx, vy, vz, unit.azimuth ?? 0, {
+      ring.userData.unitId = unit.id
+      ring.userData.selOnly = true
+      ring.visible = unit.id === this.selectedUnitId
+      const { dir, ranged } = this.rangeOverlay(vx, vy, vz, unit.azimuth ?? 0, {
         unit_type: unit.unit_type, label: unit.label,
         weight_class: unit.weight_class, role: unit.role, fire_kind: unit.fire_kind,
         obs_arc: unit.obs_arc, eff_range_m: unit.eff_range_m,
         max_range_m: unit.max_range_m, height_agl_m: unit.height_agl_m,
       }, color)
-      group.add(icon, pole, ring, ...overlay)
+      for (const o of ranged) {
+        o.userData.unitId = unit.id
+        o.userData.selOnly = true
+        o.visible = unit.id === this.selectedUnitId
+      }
+      for (const d of dir) d.userData.side = side
+      this.viewconesGroup.add(...dir)
+      group.add(icon, pole, ring, ...ranged)
     }
   }
 
@@ -538,27 +575,45 @@ export class Viewer {
     return mesh
   }
 
-  // Range ring + optional sector wedge for operator-placed enemies.
   // thetaStart maps compass yaw to THREE.CircleGeometry theta (0=east after rotation.x=-PI/2).
-  private rangeOverlay(vx: number, vy: number, vz: number, yaw_deg: number, profile: UnitProfile, color = 0xff2b2b): THREE.Object3D[] {
+  // `dir`: short facing cone (orientation + view angle) always shown for the RGB overview.
+  // `ranged`: full eff-range ring + wedge, revealed only when the unit is selected —
+  // the accurate engagement picture lives in danger/depth color modes.
+  private static DIR_R = 70 // m — glance-first facing cone, not the full weapon range
+  private rangeOverlay(
+    vx: number, vy: number, vz: number, yaw_deg: number, profile: UnitProfile, color = 0xff2b2b,
+  ): { dir: THREE.Object3D[]; ranged: THREE.Object3D[] } {
     const r = profile.eff_range_m
-    const arc = profile.obs_arc
+    const sector = profile.obs_arc > 0 && profile.obs_arc < 360
+    const arc = sector ? profile.obs_arc : 360
+    const thetaStart = (90 - yaw_deg - arc / 2) * Math.PI / 180
+
+    const dir = this.decal(new THREE.Mesh(
+      new THREE.CircleGeometry(Viewer.DIR_R, 40, thetaStart, arc * Math.PI / 180),
+      new THREE.MeshBasicMaterial({ color, opacity: 0.28, side: THREE.DoubleSide })
+    ))
+    dir.renderOrder = 3
+    dir.rotation.x = -Math.PI / 2
+    dir.position.set(vx, vy + 0.2, vz)
+
     const ring = this.decal(new THREE.Mesh(
       new THREE.RingGeometry(r - 3, r + 3, 80),
       new THREE.MeshBasicMaterial({ color, opacity: 0.45, side: THREE.DoubleSide })
     ))
     ring.rotation.x = -Math.PI / 2
     ring.position.set(vx, vy + 0.3, vz)
-    if (arc >= 360 || arc <= 0) return [ring]
-    const thetaStart = (90 - yaw_deg - arc / 2) * Math.PI / 180
-    const wedge = this.decal(new THREE.Mesh(
-      new THREE.CircleGeometry(r, 60, thetaStart, arc * Math.PI / 180),
-      new THREE.MeshBasicMaterial({ color, opacity: 0.1, side: THREE.DoubleSide })
-    ))
-    wedge.renderOrder = 3
-    wedge.rotation.x = -Math.PI / 2
-    wedge.position.set(vx, vy + 0.2, vz)
-    return [ring, wedge]
+    const ranged: THREE.Object3D[] = [ring]
+    if (sector) {
+      const wedge = this.decal(new THREE.Mesh(
+        new THREE.CircleGeometry(r, 60, thetaStart, arc * Math.PI / 180),
+        new THREE.MeshBasicMaterial({ color, opacity: 0.1, side: THREE.DoubleSide })
+      ))
+      wedge.renderOrder = 3
+      wedge.rotation.x = -Math.PI / 2
+      wedge.position.set(vx, vy + 0.2, vz)
+      ranged.push(wedge)
+    }
+    return { dir: [dir], ranged }
   }
 
   /** A billboarded NATO/APP-6 unit symbol — always faces the camera, always drawn on top. */
@@ -748,7 +803,22 @@ export class Viewer {
   }
 
   private onPlaceMouseDown = (e: MouseEvent) => {
-    if (!this.placing || !this.meta || !this.points) return
+    if (!this.meta || !this.points) return
+    // reorient: drag from an existing icon (only when not in place/remove mode)
+    if (!this.placing && !this.removing) {
+      this.raycaster.setFromCamera(this.toNDC(e), this.camera)
+      const iconHit = this.raycaster.intersectObjects(this.placedUnitPickables, false)[0]
+      if (iconHit) {
+        const id = iconHit.object.userData.unitId as string
+        const side = iconHit.object.userData.side as 'hostile' | 'friendly'
+        const color = side === 'hostile' ? 0xff2b2b : 0x3b82f6
+        const ip = iconHit.object.position
+        this.reorientPin = { unitId: id, vx: ip.x, vy: ip.y - 26, vz: ip.z, color }
+        this.controls.enabled = false
+        return
+      }
+    }
+    if (!this.placing) return
     this.raycaster.setFromCamera(this.toNDC(e), this.camera)
     const hit = this.raycaster.intersectObject(this.points, false)[0]
     if (!hit) return
@@ -765,11 +835,39 @@ export class Viewer {
       new THREE.LineBasicMaterial({ color })
     )
     const profile = this.profileFor(this.activeUnitType)
-    this.enemyOrientGroup.add(stub, ...this.rangeOverlay(px, py, pz, 0, profile, color))
+    const ov = this.rangeOverlay(px, py, pz, 0, profile, color)
+    this.enemyOrientGroup.add(stub, ...ov.dir, ...ov.ranged)
   }
 
   private onPlaceMouseMove = (e: MouseEvent) => {
-    if (!this.pendingEnemyPin || !this.meta || !this.points || !(e.buttons & 1)) return
+    if (!(e.buttons & 1)) return
+    // reorient drag: update the cone live while dragging from an icon
+    if (this.reorientPin && this.meta && this.points) {
+      this.raycaster.setFromCamera(this.toNDC(e), this.camera)
+      const hit = this.raycaster.intersectObject(this.points, false)[0]
+      if (!hit) return
+      const { vx, vy, vz, unitId, color } = this.reorientPin
+      const yaw = this.yawFromPinToViewer(vx, vz, hit.point.x, hit.point.z)
+      // update the icon rotation live
+      const icon = this.placedUnitPickables.find((p) => p.userData.unitId === unitId)
+      if (icon) icon.rotation.y = yaw * Math.PI / 180
+      // update the view cone live
+      for (const c of [...this.viewconesGroup.children]) {
+        if (c.userData.unitId === unitId) {
+          this.viewconesGroup.remove(c);
+          (c as THREE.Mesh).geometry?.dispose?.();
+          ((c as THREE.Mesh).material as THREE.Material)?.dispose?.()
+        }
+      }
+      const unit = this.unitById.get(unitId)
+      if (unit) {
+        const { dir } = this.rangeOverlay(vx, vy, vz, yaw, unit, color)
+        for (const d of dir) { d.userData.side = unit.side; d.userData.unitId = unitId }
+        this.viewconesGroup.add(...dir)
+      }
+      return
+    }
+    if (!this.pendingEnemyPin || !this.meta || !this.points) return
     this.raycaster.setFromCamera(this.toNDC(e), this.camera)
     const hit = this.raycaster.intersectObject(this.points, false)[0]
     if (!hit) return
@@ -791,10 +889,23 @@ export class Viewer {
       new THREE.LineBasicMaterial({ color })
     )
     const profile = this.profileFor(this.activeUnitType)
-    this.enemyOrientGroup.add(pole, arrow, ...this.rangeOverlay(px, py, pz, yaw, profile, color))
+    const ov = this.rangeOverlay(px, py, pz, yaw, profile, color)
+    this.enemyOrientGroup.add(pole, arrow, ...ov.dir, ...ov.ranged)
   }
 
   private onPlaceMouseUp = (e: MouseEvent) => {
+    if (this.reorientPin && this.meta && this.points) {
+      const { unitId, vx, vz } = this.reorientPin
+      this.reorientPin = null
+      this.controls.enabled = true
+      this.raycaster.setFromCamera(this.toNDC(e), this.camera)
+      const hit = this.raycaster.intersectObject(this.points, false)[0]
+      if (hit) {
+        const yaw = this.yawFromPinToViewer(vx, vz, hit.point.x, hit.point.z)
+        this.reorientCb(unitId, yaw)
+      }
+      return
+    }
     if (!this.pendingEnemyPin || !this.meta || !this.points) return
     const pin = this.pendingEnemyPin
     this.pendingEnemyPin = null

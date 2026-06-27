@@ -52,6 +52,7 @@ interface AppState {
   placeUnit: (req: PlaceUnitRequest) => Promise<void>
   removeUnit: (id: string) => Promise<void>
   clearUnits: (side: 'hostile' | 'friendly') => Promise<void>
+  reorientUnit: (id: string, azimuth: number) => Promise<void>
   setScanning: (scanning: boolean) => void
 }
 
@@ -77,7 +78,7 @@ export const useStore = create<AppState>((set) => ({
 
   colorMode: 'rgb',
   overlayOnRgb: false,
-  layers: { points: true, boxes: true, observer: true, threats: true },
+  layers: { points: true, boxes: true, observer: true, threats: true, viewcones: true },
   classVisibility: DEFAULT_CLASS_VISIBILITY,
   selected: null,
   selectedCursor: null,
@@ -129,6 +130,11 @@ export const useStore = create<AppState>((set) => ({
   clearUnits: async (side) => {
     await api.clearUnits(side)
     set((s) => ({ units: s.units.filter((u) => u.side !== side) }))
+  },
+
+  reorientUnit: async (id, azimuth) => {
+    const updated = await api.patchUnit(id, { azimuth })
+    set((s) => ({ units: s.units.map((u) => u.id === id ? updated : u) }))
   },
 
   setScanning: (scanning) => set({ scanning }),
