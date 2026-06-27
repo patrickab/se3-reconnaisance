@@ -322,7 +322,9 @@ export class Viewer {
     if (key === 'points' && this.points) this.points.visible = visible
     if (key === 'boxes') this.boxGroup.visible = visible
     if (key === 'observer') this.observerGroup.visible = visible
-    if (key === 'threats') this.threatGroup.visible = visible
+    // enemy markers now live in placedEnemyGroup (live /api/units); threatGroup holds only
+    // the advance-axis arrow. "hide enemy markers" should hide the actual enemy markers.
+    if (key === 'threats') { this.placedEnemyGroup.visible = visible; this.threatGroup.visible = visible }
   }
 
   setClassVisibility(visibility: ClassVisibility) {
@@ -559,10 +561,8 @@ export class Viewer {
     return [ring, wedge]
   }
 
-  // A prominent friendly-troop marker (raised blue pole + cone icon + ground ring),
-  // matching the enemy markers so our disposition is just as visible from the top.
   /** A billboarded NATO/APP-6 unit symbol — always faces the camera, always drawn on top. */
-   private symbolSprite(sidc: string, worldH = 14): THREE.Sprite {
+  private symbolSprite(sidc: string, worldH = 14): THREE.Sprite {
     const tex = symbolTexture(sidc)
     const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true }))
     const aspect = (tex.userData.aspect as number) ?? 1
@@ -571,75 +571,19 @@ export class Viewer {
     return sprite
   }
 
-  private friendlyMarker(E: number, N: number, U: number, meta: CloudMeta): THREE.Object3D[] {
-    const FRIEND = 0x3b82f6
-    const [vx, vy, vz] = w2v([E, N, U], meta.origin, meta.span)
-    const top = vy + 26
-    const pole = new THREE.Line(
-      new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(vx, vy, vz), new THREE.Vector3(vx, top, vz)]),
-      new THREE.LineBasicMaterial({ color: FRIEND })
-    )
-    const icon = this.symbolSprite(SIDC.friendly, 13)
-    icon.position.set(vx, top, vz)
-    const ring = this.decal(new THREE.Mesh(
-      new THREE.RingGeometry(6, 9, 24),
-      new THREE.MeshBasicMaterial({ color: FRIEND, opacity: 0.85, side: THREE.DoubleSide })
-    ))
-    ring.rotation.x = -Math.PI / 2
-    ring.position.set(vx, vy + 0.5, vz)
-    return [pole, icon, ring]
-  }
-
   private buildThreat(threat: ThreatInfo, meta: CloudMeta) {
-    const ENEMY = 0xff2b2b
-    for (const p of threat.positions) {
-      const [vx, vy, vz] = w2v(p.world, meta.origin, meta.span)
-      const top = vy + 28
-      const ring = this.decal(new THREE.Mesh(
-        new THREE.RingGeometry(8, 12, 32),
-        new THREE.MeshBasicMaterial({ color: ENEMY, opacity: 0.8, side: THREE.DoubleSide })
-      ))
-      ring.rotation.x = -Math.PI / 2
-      ring.position.set(vx, vy + 0.3, vz)
-      const pole = new THREE.Line(
-        new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(vx, vy, vz), new THREE.Vector3(vx, top, vz)]),
-        new THREE.LineBasicMaterial({ color: ENEMY })
-      )
-      const icon = this.symbolSprite(SIDC[p.type] ?? SIDC.sniper_op, 16)
-      icon.position.set(vx, top, vz)
-      icon.userData.threat = p
-      this.threatGroup.add(ring, pole, icon)
-      this.threatPickables.push(icon)
-
-      // sector of fire — a ground wedge showing which way this shooter observes/engages.
-      // At the shooter's own elevation (not the scene floor) and drawn on top of the cloud.
-      if (p.role !== 'indirect' && p.arc_deg > 0) {
-        const wedge = this.decal(new THREE.Mesh(
-          new THREE.CircleGeometry(140, 40, (p.facing_deg - p.arc_deg / 2) * Math.PI / 180, p.arc_deg * Math.PI / 180),
-          new THREE.MeshBasicMaterial({ color: ENEMY, opacity: 0.16, side: THREE.DoubleSide })
-        ))
-        wedge.renderOrder = 3 // beneath the rings/markers but above the cloud
-        wedge.rotation.x = -Math.PI / 2
-        wedge.position.set(vx, vy + 0.2, vz)
-        this.threatGroup.add(wedge)
-      }
-    }
-
-    // OUR troops / avenue of approach — prominent blue markers (the friendly disposition
-    // the enemy is templated against), + an advance-axis arrow toward the objective.
-    if (threat.avenue?.length) {
-      const FRIEND = 0x3b82f6
-      let mu = 0
-      for (const [E, N, U] of threat.avenue) {
-        this.threatGroup.add(...this.friendlyMarker(E, N, U, meta))
-        mu += U
-      }
-      mu /= threat.avenue.length
-      const [cE, cN] = threat.avenue_centroid
-      const [sx0, sy0, sz0] = w2v([cE, cN, mu], meta.origin, meta.span)
-      const dir = new THREE.Vector3(-sx0, 0, -sz0).normalize() // toward objective (scene centre)
-      this.threatGroup.add(new THREE.ArrowHelper(dir, new THREE.Vector3(sx0, sy0 + 18, sz0), 150, FRIEND, 40, 24))
-    }
+    // Enemy AND friendly unit markers (icon + pole + ring + range/sector overlay) are drawn
+    // from the live /api/units store by placeContacts(). The analysed laydown must NOT redraw
+    // them — doing so stacked a second marker on every unit after 'analyse' (the doubling bug).
+    // The only laydown-specific overlay left here is the advance-axis arrow; TRPs are drawn by
+    // buildTRPs(), the kill-zone/danger surface is the per-point colour overlay.
+    if (!threat.avenue?.length) return
+    const FRIEND = 0x3b82f6
+    const mu = threat.avenue.reduce((s, p) => s + p[2], 0) / threat.avenue.length
+    const [cE, cN] = threat.avenue_centroid
+    const [sx0, sy0, sz0] = w2v([cE, cN, mu], meta.origin, meta.span)
+    const dir = new THREE.Vector3(-sx0, 0, -sz0).normalize() // toward objective (scene centre)
+    this.threatGroup.add(new THREE.ArrowHelper(dir, new THREE.Vector3(sx0, sy0 + 18, sz0), 150, FRIEND, 40, 24))
   }
 
   // Pre-planned mortar target points on chokepoints (cyan crosshair markers).
