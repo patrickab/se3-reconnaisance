@@ -1,5 +1,7 @@
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js'
 import { BoundingBox, ClassVisibility, CloudMeta, ColorMode, FieldsInfo, LayerKey, SceneCursor, ScreenPoint, ThreatInfo, ThreatPosition, UnitContact, UnitProfile, UnitType, ViewshedInfo, WorldCoordinate } from '../lib/types'
 import ms from 'milsymbol'
 import { CLASS_COLORS, TURBO } from '../lib/colors'
@@ -34,6 +36,61 @@ function sidcFor(unit: UnitContact): string {
   if (unit.side === 'friendly') return SIDC[`friendly.${unit.unit_type}`] ?? SIDC.friendly
   return SIDC[unit.unit_type] ?? SIDC.sniper
 }
+// ---- 3D unit models (meshopt-compressed GLB, served from /public/assets) ----
+// One template is loaded+normalized per type, then cheaply .clone()d (shared
+// geometry/material) for every placed contact.
+const MODEL_URL: Record<string, string> = {
+  tank: '/assets/tank.glb', ifv: '/assets/ifv.glb', apc: '/assets/apc.glb',
+  assault: '/assets/assault.glb', sniper: '/assets/sniper.glb', mortar: '/assets/mortar.glb',
+  at_team: '/assets/at_team.glb', atgm_team: '/assets/atgm_team.glb',
+}
+// On-map size (metres, longest axis). Oversized vs reality so units read as
+// markers on a 1.2 km surface. ponytail: pure legibility knob — tune to taste.
+const MODEL_SIZE: Record<string, number> = {
+  tank: 22, ifv: 18, apc: 20, assault: 10, sniper: 11, mortar: 10,
+  at_team: 10, atgm_team: 10,
+}
+// Per-type forward correction (deg) added to the placement yaw. AI meshes don't
+// share a forward axis, so each body's nose must be rotated onto the viewfield.
+// Measured from the GLB bboxes: dismounts/teams point along local +Z (need 180°);
+// the three vehicles point along local +X — their hull length runs X — so they
+// need 90° to swing from broadside onto the heading.
+// ponytail: if a vehicle ends up tail-first, flip that one 90 ↔ 270.
+const MODEL_YAW_DEG: Record<string, number> = {
+  tank: 270, ifv: 270, apc: 270,
+  assault: 180, sniper: 180, mortar: 180, at_team: 180, atgm_team: 180,
+}
+const gltfLoader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder)
+const modelCache = new Map<string, THREE.Object3D>()
+const modelPending = new Map<string, Promise<THREE.Object3D>>()
+
+// Load + normalize a type's model once: scale longest axis to MODEL_SIZE,
+// centre on XZ, drop base to y=0. Returns a template to clone per placement.
+function loadUnitModel(type: string): Promise<THREE.Object3D> {
+  const cached = modelCache.get(type)
+  if (cached) return Promise.resolve(cached)
+  let p = modelPending.get(type)
+  if (!p) {
+    const url = MODEL_URL[type] ?? MODEL_URL.assault
+    p = gltfLoader.loadAsync(url).then((g) => {
+      const root = g.scene
+      const box = new THREE.Box3().setFromObject(root)
+      const size = box.getSize(new THREE.Vector3())
+      const s = (MODEL_SIZE[type] ?? 10) / (Math.max(size.x, size.y, size.z) || 1)
+      root.scale.setScalar(s)
+      const box2 = new THREE.Box3().setFromObject(root)
+      const c = box2.getCenter(new THREE.Vector3())
+      root.position.set(-c.x, -box2.min.y, -c.z)
+      const tmpl = new THREE.Group()
+      tmpl.add(root)
+      modelCache.set(type, tmpl)
+      return tmpl
+    })
+    modelPending.set(type, p)
+  }
+  return p
+}
+
 // one CanvasTexture per SIDC, reused across markers
 const symTex = new Map<string, THREE.Texture>()
 function symbolTexture(sidc: string): THREE.Texture {
@@ -152,9 +209,19 @@ export class Viewer {
   private colRGBArr?: Float32Array   // linear RGB base, for blending overlays onto the real map
   private blendBuf?: Float32Array
 
+  private static DRAG_PX = 6   // pointer travel below this is a click, not a drag
+  private downXY: { x: number; y: number } | null = null
+
   constructor(private canvas: HTMLCanvasElement) {
     this.scene.background = new THREE.Color(0x080c10)
     this.scene.add(this.boxGroup, this.observerGroup, this.threatGroup, this.friendlyGroup, this.placedEnemyGroup, this.viewconesGroup, this.enemyOrientGroup)
+
+    // Lights only matter for the PBR unit models (cloud/boxes are unlit). Cool
+    // sky / warm key keeps the gunmetal+olive textures readable on the dark scene.
+    this.scene.add(new THREE.HemisphereLight(0xbfd4e6, 0x10140c, 1.2))
+    const sun = new THREE.DirectionalLight(0xfff3e0, 2.4)
+    sun.position.set(0.6, 1, 0.4)
+    this.scene.add(sun)
 
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' })
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2.5))
@@ -591,6 +658,19 @@ export class Viewer {
       for (const d of dir) { d.userData.side = side; d.userData.unitId = unit.id }
       this.viewconesGroup.add(...dir)
       group.add(icon, pole, ring, ...ranged)
+
+      // 3D body at ground level (visual only — icon/pole/ring stay the pick + tactical layer).
+      const place = (tmpl: THREE.Object3D) => {
+        if (this.unitById.get(unit.id) !== unit) return  // removed or re-placed while loading
+        const model = tmpl.clone(true)
+        model.position.set(vx, vy, vz)
+        model.rotation.y = (-(unit.azimuth ?? 0) + (MODEL_YAW_DEG[unit.unit_type] ?? 0)) * Math.PI / 180
+        model.userData.unitId = unit.id
+        group.add(model)
+      }
+      const cached = modelCache.get(unit.unit_type)
+      if (cached) place(cached)
+      else loadUnitModel(unit.unit_type).then(place).catch(() => {})
     }
   }
 
@@ -920,6 +1000,7 @@ export class Viewer {
 
   private onPlaceMouseDown = (e: MouseEvent) => {
     if (!this.meta || !this.points) return
+    this.downXY = { x: e.clientX, y: e.clientY }
     // reorient: drag from an existing icon or rotation handle (only when not in place/remove mode)
     if (!this.placing && !this.removing) {
       this.raycaster.setFromCamera(this.toNDC(e), this.camera)
@@ -958,8 +1039,9 @@ export class Viewer {
 
   private onPlaceMouseMove = (e: MouseEvent) => {
     if (!(e.buttons & 1)) return
-    // reorient drag: update the cone live while dragging from an icon/handle
+    // reorient drag: update the cone live while dragging from an icon/handle (only once it's a drag)
     if (this.reorientPin && this.meta) {
+      if (this.downXY && Math.hypot(e.clientX - this.downXY.x, e.clientY - this.downXY.y) < Viewer.DRAG_PX) return
       const { vx, vy, vz, unitId, color } = this.reorientPin
       const pt = this.groundHit(e, vy)
       if (!pt) return
@@ -1017,6 +1099,8 @@ export class Viewer {
       const { unitId, vx, vy, vz } = this.reorientPin
       this.reorientPin = null
       this.controls.enabled = true
+      const moved = this.downXY ? Math.hypot(e.clientX - this.downXY.x, e.clientY - this.downXY.y) : 0
+      if (moved < Viewer.DRAG_PX) return   // a click, not a drag → let onClick open the info panel
       this.reorientJustFinished = true
       const pt = this.groundHit(e, vy)
       if (pt) {
@@ -1050,6 +1134,8 @@ export class Viewer {
     if (this.placing) return
     // reorient drag just finished — don't open popup on the icon that was dragged
     if (this.reorientJustFinished) { this.reorientJustFinished = false; return }
+    // a drag (camera orbit) also fires 'click' — ignore it so orbiting doesn't measure/select
+    if (this.downXY && Math.hypot(e.clientX - this.downXY.x, e.clientY - this.downXY.y) > Viewer.DRAG_PX) return
     const ndc = this.toNDC(e)
     this.raycaster.setFromCamera(ndc, this.camera)
     // remove mode: clicking a placed unit deletes it
