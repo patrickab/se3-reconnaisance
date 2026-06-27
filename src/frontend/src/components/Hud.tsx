@@ -11,12 +11,14 @@ const CLASSES: { key: BoxClass; label: string }[] = [
   { key: 'car', label: 'Car' },
 ]
 
-const MODES: { key: ColorMode; label: string; needs?: 'viewshed' | 'threat' }[] = [
+const MODES: { key: ColorMode; label: string; needs?: 'viewshed' | 'threat' | 'fields' }[] = [
   { key: 'rgb', label: 'RGB' },
   { key: 'height', label: 'Height' },
   { key: 'temperature', label: 'Temp.' },
   { key: 'viewshed', label: 'View', needs: 'viewshed' },
   { key: 'threat', label: 'Threat', needs: 'threat' },
+  { key: 'danger', label: 'Danger', needs: 'fields' },
+  { key: 'depth', label: 'Kill zone', needs: 'fields' },
 ]
 
 export default function Hud() {
@@ -24,6 +26,7 @@ export default function Hud() {
   const { meta, boxes, colorMode, setColorMode, layers, toggleLayer, classVisibility, toggleClass } = useStore()
   const viewshedReady = useStore((s) => s.viewshedReady)
   const threatReady = useStore((s) => s.threatReady)
+  const fieldsReady = useStore((s) => s.fieldsReady)
   if (!meta) return null
 
   const counts = boxes.reduce<Record<BoxClass, number>>(
@@ -63,13 +66,17 @@ export default function Hud() {
               <div className="segmented-toggle grid grid-cols-3 text-[8px] text-tactical-secondary">
               {MODES.map((mode) => {
                 const active = colorMode === mode.key
-                const ready = mode.needs === 'viewshed' ? viewshedReady : mode.needs === 'threat' ? threatReady : true
+                const ready = mode.needs === 'viewshed' ? viewshedReady
+                  : mode.needs === 'threat' ? threatReady
+                  : mode.needs === 'fields' ? fieldsReady
+                  : true
+                const script = mode.needs === 'threat' ? 'threat_template.py' : mode.needs === 'fields' ? 'fields.py' : 'visibility.py'
                 return (
                   <button
                     key={mode.key}
                     disabled={!ready}
                     onClick={() => ready && setColorMode(mode.key)}
-                    title={!ready ? `run ${mode.needs === 'threat' ? 'threat_template.py' : 'visibility.py'}` : undefined}
+                    title={!ready ? `run ${script}` : undefined}
                     className={`min-w-0 truncate px-1.5 py-1 transition ${
                       !ready ? 'cursor-not-allowed opacity-30'
                         : active ? 'bg-tactical-panel2 text-tactical-accent'

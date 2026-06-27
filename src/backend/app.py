@@ -131,3 +131,28 @@ def threat_info() -> Response:
     if not f.exists():
         return Response(status_code=404)
     return FileResponse(f, media_type="application/json")
+
+
+def _bin(name: str) -> Response:
+    f = BUILD / name
+    if not f.exists():
+        return Response(status_code=404)
+    return Response(f.read_bytes(), media_type="application/octet-stream")
+
+
+@app.get("/api/danger")
+def danger() -> Response:
+    return _bin("danger.bin")
+
+
+@app.get("/api/depth")
+def depth() -> Response:
+    return _bin("depth.bin")
+
+
+@app.get("/api/fields-info")
+def fields_info() -> Response:
+    f = BUILD / "fields.json"
+    if not f.exists():
+        return Response(status_code=404)
+    return FileResponse(f, media_type="application/json")

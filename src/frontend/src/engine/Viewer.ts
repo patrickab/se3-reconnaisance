@@ -1,8 +1,8 @@
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
-import { BoundingBox, ClassVisibility, CloudMeta, ColorMode, LayerKey, ThreatInfo, ThreatPosition, ViewshedInfo } from '../lib/types'
+import { BoundingBox, ClassVisibility, CloudMeta, ColorMode, FieldsInfo, LayerKey, ThreatInfo, ThreatPosition, ViewshedInfo } from '../lib/types'
 import { CLASS_COLORS, TURBO } from '../lib/colors'
-import { fetchCloud, fetchViewshed, fetchThreat } from '../lib/api'
+import { fetchCloud, fetchViewshed, fetchThreat, fetchDanger, fetchDepth } from '../lib/api'
 import { w2v } from '../lib/utils'
 
 // Module-level cache: the 54 MB cloud is fetched at most once per page load,
@@ -10,6 +10,13 @@ import { w2v } from '../lib/utils'
 let cloudBuf: ArrayBuffer | null = null
 let vsFlags: Uint8Array | null = null
 let thFlags: Uint8Array | null = null
+let dgFlags: Uint8Array | null = null
+let dpFlags: Uint8Array | null = null
+
+// engagement-area depth palette: 0 dead · 1 single · 2 cross-fire · 3+ kill zone
+const DEPTH_PAL: [number, number, number][] = [
+  [0.1, 0.11, 0.13], [0.9, 0.82, 0.27], [0.96, 0.59, 0.16], [0.92, 0.27, 0.16], [0.78, 0.12, 0.24], [0.66, 0.04, 0.35],
+]
 
 // sRGB → linear transfer (IEC 61966-2-1). Vertex colours must be linear because
 // the renderer re-encodes to sRGB on output.
@@ -76,13 +83,15 @@ export class Viewer {
 
   /** Fetch the cloud + viewshed + threat and build the whole scene. Idempotent. */
   async load(meta: CloudMeta, boxes: BoundingBox[], vs: ViewshedInfo | null,
-             threat: ThreatInfo | null): Promise<{ viewshed: boolean; threat: boolean }> {
+             threat: ThreatInfo | null, fields: FieldsInfo | null): Promise<{ viewshed: boolean; threat: boolean; fields: boolean }> {
     const [, , sz] = meta.span
     const [sx, sy] = meta.span
 
     if (!cloudBuf) cloudBuf = await fetchCloud()
     if (vs && !vsFlags) vsFlags = await fetchViewshed()
     if (threat && !thFlags) thFlags = await fetchThreat()
+    if (fields && !dgFlags) dgFlags = await fetchDanger()
+    if (fields && !dpFlags) dpFlags = await fetchDepth()
 
     const { n } = meta
     const pos = new Float32Array(cloudBuf, 0, n * 3)
@@ -149,6 +158,27 @@ export class Viewer {
       }
       this.colors.threat = new THREE.BufferAttribute(colTH, 3)
     }
+    if (dgFlags) {
+      const colDG = new Float32Array(n * 3) // continuous danger/cost surface (turbo)
+      for (let i = 0; i < n; i++) {
+        const v = dgFlags[i] / 255
+        const c = v < 0.04 ? [0.1, 0.11, 0.13] : TURBO(v)
+        colDG[i * 3] = srgb2lin(c[0])
+        colDG[i * 3 + 1] = srgb2lin(c[1])
+        colDG[i * 3 + 2] = srgb2lin(c[2])
+      }
+      this.colors.danger = new THREE.BufferAttribute(colDG, 3)
+    }
+    if (dpFlags) {
+      const colDP = new Float32Array(n * 3) // engagement-area depth (overlapping fields of fire)
+      for (let i = 0; i < n; i++) {
+        const c = DEPTH_PAL[Math.min(dpFlags[i], DEPTH_PAL.length - 1)]
+        colDP[i * 3] = srgb2lin(c[0])
+        colDP[i * 3 + 1] = srgb2lin(c[1])
+        colDP[i * 3 + 2] = srgb2lin(c[2])
+      }
+      this.colors.depth = new THREE.BufferAttribute(colDP, 3)
+    }
 
     const geo = new THREE.BufferGeometry()
     geo.setAttribute('position', new THREE.BufferAttribute(positions, 3))
@@ -163,13 +193,14 @@ export class Viewer {
     this.buildBoxes(boxes, meta)
     if (vs) this.buildObserver(vs, meta)
     if (threat) this.buildThreat(threat, meta)
+    if (fields) this.buildTRPs(fields, meta)
 
     const d = Math.max(sx, sy)
     this.camera.position.set(0, d * 0.55, d * 0.85)
     this.controls.target.set(0, 0, 0)
     this.controls.update()
     this.resize()
-    return { viewshed: !!vsFlags, threat: !!thFlags }
+    return { viewshed: !!vsFlags, threat: !!thFlags, fields: !!dgFlags }
   }
 
   setColorMode(mode: ColorMode) {
@@ -300,6 +331,26 @@ export class Viewer {
       icon.userData.threat = p
       this.threatGroup.add(ring, pole, icon)
       this.threatPickables.push(icon)
+    }
+  }
+
+  // Pre-planned mortar target points on chokepoints (cyan crosshair markers).
+  private buildTRPs(fields: FieldsInfo, meta: CloudMeta) {
+    const TRP = 0x22d3d3
+    const groundY = -meta.span[2] / 2
+    for (const [E, N] of fields.trps) {
+      const [vx, , vz] = w2v([E, N, meta.origin[2]], meta.origin, meta.span)
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(6, 9, 28),
+        new THREE.MeshBasicMaterial({ color: TRP, transparent: true, opacity: 0.85, side: THREE.DoubleSide })
+      )
+      ring.rotation.x = -Math.PI / 2
+      ring.position.set(vx, groundY + 0.4, vz)
+      const bar = new THREE.Mesh(new THREE.BoxGeometry(16, 0.6, 2), new THREE.MeshBasicMaterial({ color: TRP }))
+      bar.position.set(vx, groundY + 0.5, vz)
+      const bar2 = bar.clone()
+      bar2.rotation.y = Math.PI / 2
+      this.threatGroup.add(ring, bar, bar2)
     }
   }
 

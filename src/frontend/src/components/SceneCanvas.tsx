@@ -23,17 +23,18 @@ export default function SceneCanvas() {
 
     ;(async () => {
       try {
-        const [meta, boxes, viewshedInfo, threatInfo] = await Promise.all([
+        const [meta, boxes, viewshedInfo, threatInfo, fieldsInfo] = await Promise.all([
           api.fetchMeta(),
           api.fetchBoxes(),
           api.fetchViewshedInfo(),
           api.fetchThreatInfo(),
+          api.fetchFieldsInfo(),
         ])
         if (disposed) return
-        useStore.getState().setData({ meta, boxes, viewshedInfo, threatInfo })
-        const ready = await viewer.load(meta, boxes, viewshedInfo, threatInfo)
+        useStore.getState().setData({ meta, boxes, viewshedInfo, threatInfo, fieldsInfo })
+        const ready = await viewer.load(meta, boxes, viewshedInfo, threatInfo, fieldsInfo)
         viewer.setClassVisibility(useStore.getState().classVisibility)
-        if (!disposed) useStore.getState().setReady({ viewshedReady: ready.viewshed, threatReady: ready.threat })
+        if (!disposed) useStore.getState().setReady({ viewshedReady: ready.viewshed, threatReady: ready.threat, fieldsReady: ready.fields })
       } catch (e) {
         if (!disposed) useStore.getState().setError(e instanceof Error ? e.message : 'Failed to load')
       }

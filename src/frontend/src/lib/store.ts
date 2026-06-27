@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { BoundingBox, BoxClass, ClassVisibility, CloudMeta, ColorMode, LayerKey, Layers, ScreenPoint, ThreatInfo, ThreatPosition, ViewshedInfo } from './types'
+import { BoundingBox, BoxClass, ClassVisibility, CloudMeta, ColorMode, FieldsInfo, LayerKey, Layers, ScreenPoint, ThreatInfo, ThreatPosition, ViewshedInfo } from './types'
 
 interface AppState {
   meta: CloudMeta | null
@@ -8,6 +8,8 @@ interface AppState {
   viewshedReady: boolean
   threatInfo: ThreatInfo | null
   threatReady: boolean
+  fieldsInfo: FieldsInfo | null
+  fieldsReady: boolean
   loading: boolean
   error: string | null
 
@@ -19,8 +21,8 @@ interface AppState {
   selectedThreat: ThreatPosition | null
   selectedThreatPoint: ScreenPoint | null
 
-  setData: (d: { meta: CloudMeta; boxes: BoundingBox[]; viewshedInfo: ViewshedInfo | null; threatInfo: ThreatInfo | null }) => void
-  setReady: (r: { viewshedReady: boolean; threatReady: boolean }) => void
+  setData: (d: { meta: CloudMeta; boxes: BoundingBox[]; viewshedInfo: ViewshedInfo | null; threatInfo: ThreatInfo | null; fieldsInfo: FieldsInfo | null }) => void
+  setReady: (r: { viewshedReady: boolean; threatReady: boolean; fieldsReady: boolean }) => void
   setError: (error: string) => void
   setColorMode: (colorMode: ColorMode) => void
   toggleLayer: (key: LayerKey) => void
@@ -44,6 +46,8 @@ export const useStore = create<AppState>((set) => ({
   viewshedReady: false,
   threatInfo: null,
   threatReady: false,
+  fieldsInfo: null,
+  fieldsReady: false,
   loading: true,
   error: null,
 
@@ -56,7 +60,7 @@ export const useStore = create<AppState>((set) => ({
   selectedThreatPoint: null,
 
   setData: (d) => set({ ...d, loading: false, error: null }),
-  setReady: ({ viewshedReady, threatReady }) => set({ viewshedReady, threatReady }),
+  setReady: ({ viewshedReady, threatReady, fieldsReady }) => set({ viewshedReady, threatReady, fieldsReady }),
   setError: (error) => set({ error, loading: false }),
   setColorMode: (colorMode) => set({ colorMode }),
   toggleLayer: (key) => set((s) => ({ layers: { ...s.layers, [key]: !s.layers[key] } })),

@@ -1,4 +1,4 @@
-import { CloudMeta, BoundingBox, ViewshedInfo, ThreatInfo } from './types'
+import { CloudMeta, BoundingBox, ViewshedInfo, ThreatInfo, FieldsInfo } from './types'
 
 // Relative URLs: dev goes through the Vite proxy (vite.config.ts), prod is
 // served same-origin. Required GETs throw; optional ones resolve to null.
@@ -34,3 +34,12 @@ export const fetchThreat = async (): Promise<Uint8Array | null> => {
   const r = await fetch('/api/threat')
   return r.ok ? new Uint8Array(await r.arrayBuffer()) : null
 }
+
+export const fetchFieldsInfo = () => optional<FieldsInfo>('/api/fields-info')
+
+const bin = async (p: string): Promise<Uint8Array | null> => {
+  const r = await fetch(p)
+  return r.ok ? new Uint8Array(await r.arrayBuffer()) : null
+}
+export const fetchDanger = () => bin('/api/danger')
+export const fetchDepth = () => bin('/api/depth')

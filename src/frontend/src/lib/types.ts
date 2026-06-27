@@ -54,7 +54,16 @@ export interface ThreatInfo {
   positions: ThreatPosition[]
 }
 
-export type ColorMode = 'rgb' | 'height' | 'temperature' | 'viewshed' | 'threat'
+export interface FieldsInfo {
+  side: string
+  n_direct_shooters: number
+  max_engagement_depth: number
+  trps: [number, number][]
+  pct_in_kill_zone: number
+  note: string
+}
+
+export type ColorMode = 'rgb' | 'height' | 'temperature' | 'viewshed' | 'threat' | 'danger' | 'depth'
 export type LayerKey = 'points' | 'boxes' | 'observer' | 'threats'
 export type Layers = Record<LayerKey, boolean>
 export type ClassVisibility = Record<BoxClass, boolean>
