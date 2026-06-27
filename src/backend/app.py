@@ -111,8 +111,20 @@ def flags_for_viewshed(vis: np.ndarray, transform: Affine) -> np.ndarray:
     return flags
 
 
+def clear_laydown() -> None:
+    """Wipe the operator's enemy laydown and everything projected from it.
+
+    The laydown is per-session intel, never carried over: the battlefield must
+    open blank (terrain + object boxes only) until the operator places the enemy
+    and analyses. Terrain artifacts (DSM, viewshed) are independent and kept.
+    """
+    for name in ("threat.json", "threat.bin", "danger.bin", "depth.bin", "fields.json"):
+        (BUILD / name).unlink(missing_ok=True)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    clear_laydown()  # start every session with an empty battlefield
     PACK.update(pack_cloud(DATA / "point_cloud.ply", VOXEL, MAX_POINTS))
     print(f"packed {PACK['meta']['n']:,} pts @ {VOXEL} m/voxel")
     yield
@@ -265,3 +277,10 @@ def recompute(req: RecomputeReq) -> dict:
     threat_template.from_manual(enemies, friendly)
     fields.run()
     return {"ok": True, "n_enemies": len(enemies), "n_friendly": len(req.friendly)}
+
+
+@app.post("/api/threat/reset")
+def reset() -> dict:
+    """Clear the laydown so the battlefield goes blank again (operator clear)."""
+    clear_laydown()
+    return {"ok": True}

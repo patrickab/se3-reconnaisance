@@ -66,3 +66,10 @@ export const postRecompute = (enemies: PlacedEnemy[], friendly: [number, number,
     if (!r.ok) throw new Error(`recompute → ${r.status}`)
     return r.json()
   })
+
+// Wipe the analysed laydown (enemy markers + projected fields) — back to a blank battlefield.
+export const postReset = (): Promise<{ ok: boolean }> =>
+  fetch('/api/threat/reset', { method: 'POST' }).then((r) => {
+    if (!r.ok) throw new Error(`reset → ${r.status}`)
+    return r.json()
+  })
