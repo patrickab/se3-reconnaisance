@@ -11,8 +11,10 @@ export default function SceneCanvas() {
   const colorMode = useStore((s) => s.colorMode)
   const overlayOnRgb = useStore((s) => s.overlayOnRgb)
   const placing = useStore((s) => s.placing)
-  const friendly = useStore((s) => s.friendly)
-  const enemies = useStore((s) => s.enemies)
+  const removing = useStore((s) => s.removing)
+  const activeSide = useStore((s) => s.activeSide)
+  const activeUnitType = useStore((s) => s.activeUnitType)
+  const units = useStore((s) => s.units)
   const layers = useStore((s) => s.layers)
   const classVisibility = useStore((s) => s.classVisibility)
   const selected = useStore((s) => s.selected)
@@ -27,25 +29,36 @@ export default function SceneCanvas() {
     viewer.onCursorScreen((screen) => useStore.getState().setSelectedCursorScreen(screen))
     viewer.onPick((b, cursor) => useStore.getState().select(b, cursor ?? null))
     viewer.onPickThreat((p, point) => useStore.getState().selectThreat(p, point ?? null))
-    viewer.onPlaceFriendly((e, n, u) => useStore.getState().addFriendly(e, n, u))
-    viewer.onPlaceEnemy((e, n, u) => useStore.getState().addEnemy(e, n, u))
+    viewer.onPlaceFriendly((e, n, u, yaw_deg) => {
+      const { activeUnitType: t } = useStore.getState()
+      useStore.getState().placeUnit({ side: 'friendly', unit_type: t, world: [e, n, u], azimuth: yaw_deg, velocity: null })
+    })
+    viewer.onPlaceEnemy((e, n, u, yaw_deg) => {
+      const { activeUnitType: t } = useStore.getState()
+      useStore.getState().placeUnit({ side: 'hostile', unit_type: t, world: [e, n, u], azimuth: yaw_deg, velocity: null })
+    })
+    viewer.onRemoveUnit((id) => useStore.getState().removeUnit(id))
+    viewer.onPickPlacedUnit((id, cursor) => useStore.getState().selectUnit(id, cursor))
 
     ;(async () => {
       try {
-        const [meta, boxes, viewshedInfo, rawThreat, rawFields] = await Promise.all([
+        const [meta, boxes, viewshedInfo, rawThreat, rawFields, initialUnits, profiles] = await Promise.all([
           api.fetchMeta(),
           api.fetchBoxes(),
           api.fetchViewshedInfo(),
           api.fetchThreatInfo(),
           api.fetchFieldsInfo(),
+          api.fetchUnits(),
+          api.fetchUnitProfiles(),
         ])
         if (disposed) return
-        // The enemy is only revealed once the operator has placed their own troops and
-        // scanned — never an auto/default laydown. Gate the whole threat picture on it.
         const analyzed = rawThreat?.avenue_source === 'operator'
         const threatInfo = analyzed ? rawThreat : null
         const fieldsInfo = analyzed ? rawFields : null
         useStore.getState().setData({ meta, boxes, viewshedInfo, threatInfo, fieldsInfo })
+        useStore.getState().setUnits(initialUnits)
+        useStore.getState().setUnitProfiles(profiles)
+        viewer.setUnitProfiles(profiles)
         const ready = await viewer.load(meta, boxes, viewshedInfo, threatInfo, fieldsInfo)
         viewer.setClassVisibility(useStore.getState().classVisibility)
         if (!disposed) useStore.getState().setReady({ viewshedReady: ready.viewshed, threatReady: ready.threat, fieldsReady: ready.fields })
@@ -61,25 +74,19 @@ export default function SceneCanvas() {
     }
   }, [])
 
-  useEffect(() => {
-    viewerRef.current?.setColorMode(colorMode)
-  }, [colorMode])
+  useEffect(() => { viewerRef.current?.setColorMode(colorMode) }, [colorMode])
+  useEffect(() => { viewerRef.current?.setOverlayOnRgb(overlayOnRgb) }, [overlayOnRgb])
+  useEffect(() => { viewerRef.current?.setPlacing(placing) }, [placing])
+  useEffect(() => { viewerRef.current?.setRemoving(removing) }, [removing])
+  useEffect(() => { viewerRef.current?.setActiveSide(activeSide) }, [activeSide])
+  useEffect(() => { viewerRef.current?.setActiveUnitType(activeUnitType) }, [activeUnitType])
 
   useEffect(() => {
-    viewerRef.current?.setOverlayOnRgb(overlayOnRgb)
-  }, [overlayOnRgb])
-
-  useEffect(() => {
-    viewerRef.current?.setPlacing(placing)
-  }, [placing])
-
-  useEffect(() => {
-    viewerRef.current?.setFriendlyMarkers(friendly)
-  }, [friendly])
-
-  useEffect(() => {
-    viewerRef.current?.setEnemyMarkers(enemies)
-  }, [enemies])
+    const v = viewerRef.current
+    if (!v) return
+    v.setEnemyMarkers(units.filter((u) => u.side === 'hostile'))
+    v.setFriendlyMarkers(units.filter((u) => u.side === 'friendly'))
+  }, [units])
 
   useEffect(() => {
     const v = viewerRef.current
@@ -87,17 +94,9 @@ export default function SceneCanvas() {
     ;(Object.keys(layers) as (keyof typeof layers)[]).forEach((k) => v.setLayer(k, layers[k]))
   }, [layers])
 
-  useEffect(() => {
-    viewerRef.current?.setClassVisibility(classVisibility)
-  }, [classVisibility])
-
-  useEffect(() => {
-    viewerRef.current?.setSelected(selected?.id ?? null)
-  }, [selected])
-
-  useEffect(() => {
-    viewerRef.current?.setCursorAnchor(selectedCursor?.world ?? null)
-  }, [selectedCursor?.world])
+  useEffect(() => { viewerRef.current?.setClassVisibility(classVisibility) }, [classVisibility])
+  useEffect(() => { viewerRef.current?.setSelected(selected?.id ?? null) }, [selected])
+  useEffect(() => { viewerRef.current?.setCursorAnchor(selectedCursor?.world ?? null) }, [selectedCursor?.world])
 
   useEffect(() => {
     const viewer = viewerRef.current

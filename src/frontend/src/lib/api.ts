@@ -1,4 +1,4 @@
-import { CloudMeta, BoundingBox, ViewshedInfo, ThreatInfo, FieldsInfo, WorldCoordinate, ViewshedResult, PlacedEnemy } from './types'
+import { CloudMeta, BoundingBox, ViewshedInfo, ThreatInfo, FieldsInfo, WorldCoordinate, ViewshedResult, UnitContact, PlaceUnitRequest, UnitProfile } from './types'
 
 // Relative URLs: dev goes through the Vite proxy (vite.config.ts), prod is
 // served same-origin. Required GETs throw; optional ones resolve to null.
@@ -57,12 +57,9 @@ export const fetchViewshedAt = async (world: WorldCoordinate): Promise<ViewshedR
 }
 
 // Build the enemy laydown from operator-placed positions + project the fields. Heavy (~15 s).
-export const postRecompute = (enemies: PlacedEnemy[], friendly: [number, number, number][]): Promise<{ ok: boolean; n_enemies: number; n_friendly: number }> =>
-  fetch('/api/threat/recompute', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ enemies, friendly }),
-  }).then((r) => {
+// Omit body to use the backend's /api/units store as the source.
+export const postRecompute = (): Promise<{ ok: boolean; n_enemies: number; n_friendly: number }> =>
+  fetch('/api/threat/recompute', { method: 'POST' }).then((r) => {
     if (!r.ok) throw new Error(`recompute → ${r.status}`)
     return r.json()
   })
@@ -73,3 +70,23 @@ export const postReset = (): Promise<{ ok: boolean }> =>
     if (!r.ok) throw new Error(`reset → ${r.status}`)
     return r.json()
   })
+
+export const fetchUnits = (): Promise<UnitContact[]> => json<UnitContact[]>('/api/units')
+
+export const fetchUnitProfiles = (): Promise<UnitProfile[]> => json<UnitProfile[]>('/api/unit-profiles')
+
+export const postUnit = (req: PlaceUnitRequest): Promise<UnitContact> =>
+  fetch('/api/units', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  }).then((r) => {
+    if (!r.ok) throw new Error(`POST /api/units → ${r.status}`)
+    return r.json()
+  })
+
+export const deleteUnit = (id: string): Promise<void> =>
+  fetch(`/api/units/${id}`, { method: 'DELETE' }).then(() => undefined)
+
+export const clearUnits = (side?: 'hostile' | 'friendly'): Promise<void> =>
+  fetch(side ? `/api/units?side=${side}` : '/api/units', { method: 'DELETE' }).then(() => undefined)

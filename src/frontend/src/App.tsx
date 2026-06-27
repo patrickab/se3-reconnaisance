@@ -4,6 +4,7 @@ import Hud from './components/Hud'
 import ObjectPopup from './components/ObjectPopup'
 import ThreatPanel from './components/ThreatPanel'
 import ThreatPopup from './components/ThreatPopup'
+import PlacedUnitPopup from './components/PlacedUnitPopup'
 import FriendlyPanel from './components/FriendlyPanel'
 
 export default function App() {
@@ -22,6 +23,7 @@ export default function App() {
         <ObjectPopup />
         <ThreatPanel />
         <ThreatPopup />
+        <PlacedUnitPopup />
         {loading && !error && (
           <div className="absolute left-4 top-4 z-20 panel w-[min(19rem,calc(100vw-2rem))] px-4 py-4 text-sm text-tactical-secondary">
             <div className="eyebrow">SE3 Recon</div>
