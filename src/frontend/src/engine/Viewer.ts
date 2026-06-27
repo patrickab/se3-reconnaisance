@@ -802,6 +802,14 @@ export class Viewer {
     return Math.atan2(hitX - vx, -(hitZ - vz)) * 180 / Math.PI
   }
 
+  // Intersect a horizontal plane at world-height vy — always hits unlike the sparse point cloud.
+  private groundHit(e: MouseEvent, vy: number): THREE.Vector3 | null {
+    this.raycaster.setFromCamera(this.toNDC(e), this.camera)
+    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -vy)
+    const target = new THREE.Vector3()
+    return this.raycaster.ray.intersectPlane(plane, target)
+  }
+
   private onPlaceMouseDown = (e: MouseEvent) => {
     if (!this.meta || !this.points) return
     // reorient: drag from an existing icon (only when not in place/remove mode)
@@ -842,12 +850,11 @@ export class Viewer {
   private onPlaceMouseMove = (e: MouseEvent) => {
     if (!(e.buttons & 1)) return
     // reorient drag: update the cone live while dragging from an icon
-    if (this.reorientPin && this.meta && this.points) {
-      this.raycaster.setFromCamera(this.toNDC(e), this.camera)
-      const hit = this.raycaster.intersectObject(this.points, false)[0]
-      if (!hit) return
+    if (this.reorientPin && this.meta) {
       const { vx, vy, vz, unitId, color } = this.reorientPin
-      const yaw = this.yawFromPinToViewer(vx, vz, hit.point.x, hit.point.z)
+      const pt = this.groundHit(e, vy)
+      if (!pt) return
+      const yaw = this.yawFromPinToViewer(vx, vz, pt.x, pt.z)
       // update the icon rotation live
       const icon = this.placedUnitPickables.find((p) => p.userData.unitId === unitId)
       if (icon) icon.rotation.y = yaw * Math.PI / 180
@@ -893,15 +900,17 @@ export class Viewer {
     this.enemyOrientGroup.add(pole, arrow, ...ov.dir, ...ov.ranged)
   }
 
+  private reorientJustFinished = false  // suppress onClick popup after drag
+
   private onPlaceMouseUp = (e: MouseEvent) => {
-    if (this.reorientPin && this.meta && this.points) {
-      const { unitId, vx, vz } = this.reorientPin
+    if (this.reorientPin && this.meta) {
+      const { unitId, vx, vy, vz } = this.reorientPin
       this.reorientPin = null
       this.controls.enabled = true
-      this.raycaster.setFromCamera(this.toNDC(e), this.camera)
-      const hit = this.raycaster.intersectObject(this.points, false)[0]
-      if (hit) {
-        const yaw = this.yawFromPinToViewer(vx, vz, hit.point.x, hit.point.z)
+      this.reorientJustFinished = true
+      const pt = this.groundHit(e, vy)
+      if (pt) {
+        const yaw = this.yawFromPinToViewer(vx, vz, pt.x, pt.z)
         this.reorientCb(unitId, yaw)
       }
       return
@@ -929,6 +938,8 @@ export class Viewer {
     if (!this.meta) return
     // placement is handled by mousedown/move/up (drag-to-orient) for both sides — skip here
     if (this.placing) return
+    // reorient drag just finished — don't open popup on the icon that was dragged
+    if (this.reorientJustFinished) { this.reorientJustFinished = false; return }
     const ndc = this.toNDC(e)
     this.raycaster.setFromCamera(ndc, this.camera)
     // remove mode: clicking a placed unit deletes it

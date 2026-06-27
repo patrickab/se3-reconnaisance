@@ -46,8 +46,6 @@ def viewshed(dsm: np.ndarray, transform: Affine, res: float, obs_xy: tuple[float
         obs_z = float(dsm[orow, ocol])
     eye = obs_z + eye_h
 
-    vis = np.zeros((h, w), dtype=bool)
-    vis[orow, ocol] = True
     rng_cells = int(max_range / res)
     n_az = max(720, int(2 * np.pi * rng_cells))            # ~1-cell spacing at edge
     half = np.deg2rad(arc_deg / 2)
@@ -56,28 +54,84 @@ def viewshed(dsm: np.ndarray, transform: Affine, res: float, obs_xy: tuple[float
         azimuths = np.linspace(0, 2 * np.pi, n_az, endpoint=False)
     else:
         azimuths = np.linspace(centre - half, centre + half, max(2, int(n_az * arc_deg / 360)))
-    t = np.arange(1, rng_cells + 1) * res
+    t = (np.arange(1, rng_cells + 1) * res).astype(np.float32)
     ox, oy = obs_xy
 
+    # All rays at once, shape (n_az, rng_cells). Sample the DSM along every ray,
+    # track the per-ray running-max terrain angle; a cell is seen if a standing
+    # target there clears everything nearer. Off-grid cells become -inf so they
+    # neither occlude nor register as visible. Same algorithm as the old per-
+    # azimuth Python loop — just lifted into numpy. (See viewshed --selfcheck.)
+    xs = ox + np.cos(azimuths)[:, None] * t[None, :]
+    ys = oy + np.sin(azimuths)[:, None] * t[None, :]
+    cols = ((xs - transform.c) / transform.a).astype(np.int64)
+    rows = ((transform.f - ys) / (-transform.e)).astype(np.int64)
+    ok = (cols >= 0) & (cols < w) & (rows >= 0) & (rows < h)
+    gh = np.where(ok, dsm[np.clip(rows, 0, h - 1), np.clip(cols, 0, w - 1)], -np.inf).astype(np.float32)
+    terr_ang = (gh - eye) / t[None, :]                     # blocking angle (terrain top)
+    tgt_ang = (gh + target_h - eye) / t[None, :]           # angle to a standing target
+    run = np.maximum.accumulate(terr_ang, axis=1)
+    prev = np.empty_like(run)
+    prev[:, 0] = -np.inf
+    prev[:, 1:] = run[:, :-1]
+    seen = ok & (tgt_ang >= prev)
+
+    vis = np.zeros((h, w), dtype=bool)
+    vis[rows[seen], cols[seen]] = True
+    vis[orow, ocol] = True
+    return vis, (orow, ocol), eye
+
+
+def _viewshed_loop(dsm, transform, res, obs_xy, obs_z, eye_h, target_h, max_range,
+                   facing_deg, arc_deg):
+    """Reference per-azimuth implementation, kept only for --selfcheck parity."""
+    h, w = dsm.shape
+    orow, ocol = world_to_pixel(transform, *obs_xy)
+    orow = int(np.clip(orow, 0, h - 1)); ocol = int(np.clip(ocol, 0, w - 1))
+    if obs_z is None:
+        obs_z = float(dsm[orow, ocol])
+    eye = obs_z + eye_h
+    vis = np.zeros((h, w), dtype=bool); vis[orow, ocol] = True
+    rng_cells = int(max_range / res)
+    n_az = max(720, int(2 * np.pi * rng_cells))
+    half = np.deg2rad(arc_deg / 2); centre = np.deg2rad(facing_deg)
+    if arc_deg >= 360:
+        azimuths = np.linspace(0, 2 * np.pi, n_az, endpoint=False)
+    else:
+        azimuths = np.linspace(centre - half, centre + half, max(2, int(n_az * arc_deg / 360)))
+    t = (np.arange(1, rng_cells + 1) * res).astype(np.float32)
+    ox, oy = obs_xy
     for a in azimuths:
-        xs = ox + np.cos(a) * t
-        ys = oy + np.sin(a) * t
+        xs = ox + np.cos(a) * t; ys = oy + np.sin(a) * t
         cols = ((xs - transform.c) / transform.a).astype(np.int64)
         rows = ((transform.f - ys) / (-transform.e)).astype(np.int64)
-        ok = (cols >= 0) & (cols < w) & (rows >= 0) & (rows < h)
-        if not ok.any():
+        m = (cols >= 0) & (cols < w) & (rows >= 0) & (rows < h)
+        if not m.any():
             continue
-        rr, cc, tt = rows[ok], cols[ok], t[ok]
-        gh = dsm[rr, cc]
-        terr_ang = (gh - eye) / tt                          # blocking angle (terrain top)
-        tgt_ang = (gh + target_h - eye) / tt                # angle to a standing target
-        run = np.maximum.accumulate(terr_ang)
-        prev = np.empty_like(run)
-        prev[0] = -np.inf
-        prev[1:] = run[:-1]
-        seen = tgt_ang >= prev
+        rr, cc, tt = rows[m], cols[m], t[m]
+        gh = dsm[rr, cc].astype(np.float32)
+        run = np.maximum.accumulate((gh - eye) / tt)
+        prev = np.empty_like(run); prev[0] = -np.inf; prev[1:] = run[:-1]
+        seen = (gh + target_h - eye) / tt >= prev
         vis[rr[seen], cc[seen]] = True
-    return vis, (orow, ocol), eye
+    return vis
+
+
+def _selfcheck() -> None:
+    """Prove the vectorized viewshed matches the reference loop bit-for-bit."""
+    from affine import Affine
+    rng = np.random.default_rng(0)
+    h = w = 120
+    dsm = (rng.random((h, w)).astype(np.float32) * 20)
+    transform = Affine(2.0, 0, 1000.0, 0, -2.0, 5000.0)        # 2 m cells
+    obs_xy = (1000 + w * 2 * 0.4, 5000 - h * 2 * 0.6)
+    for arc, facing in [(360.0, 0.0), (90.0, 45.0), (180.0, 200.0)]:
+        vis, _, _ = viewshed(dsm, transform, 2.0, obs_xy, obs_z=10.0,
+                             max_range=150.0, facing_deg=facing, arc_deg=arc)
+        ref = _viewshed_loop(dsm, transform, 2.0, obs_xy, 10.0, 1.7, 1.7, 150.0,
+                             facing, arc)
+        assert np.array_equal(vis, ref), f"mismatch at arc={arc} facing={facing}"
+    print("selfcheck OK — vectorized viewshed matches reference loop")
 
 
 def _pick_observer(boxes_path: Path, box_id: str | None,
@@ -115,7 +169,12 @@ def main() -> None:
     ap.add_argument("--box", type=str, default=None, help="place observer on this box id (rooftop)")
     ap.add_argument("--x", type=float, default=None)
     ap.add_argument("--y", type=float, default=None)
+    ap.add_argument("--selfcheck", action="store_true", help="verify numpy viewshed vs reference loop")
     args = ap.parse_args()
+
+    if args.selfcheck:
+        _selfcheck()
+        return
 
     t = build_dsm(DATA / "point_cloud.ply", args.res, DATA / "bounding_boxes.json")
     xy = (args.x, args.y) if args.x is not None and args.y is not None else None
