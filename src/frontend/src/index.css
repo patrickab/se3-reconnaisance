@@ -5,10 +5,6 @@
 @tailwind utilities;
 
 @layer base {
-  html {
-    scroll-behavior: smooth;
-  }
-
   html,
   body {
     @apply bg-tactical-bg text-tactical-text;
@@ -19,129 +15,64 @@
   body {
     font-family: theme('fontFamily.sans');
     font-variant-numeric: tabular-nums;
-    text-rendering: geometricPrecision;
-  }
-
-  button {
-    @apply transition duration-200 ease-out;
-  }
-
-  button:active {
-    transform: translateY(1px) scale(0.99);
   }
 
   button:focus-visible,
   input:focus-visible,
   a:focus-visible {
-    outline: 2px solid theme('colors.tactical.accent');
-    outline-offset: 2px;
+    outline: 1px solid theme('colors.tactical.accent');
+    outline-offset: 1px;
   }
 
   ::selection {
-    background: rgb(208 168 92 / 0.34);
+    background: rgb(208 168 92 / 0.30);
   }
 }
 
 @layer components {
+  /* Flat industrial chrome: hairline borders, no gradients/glow/blur. */
   .skip-link {
-    @apply fixed left-3 top-3 z-50 -translate-y-16 rounded-md bg-tactical-accent px-3 py-2 text-sm font-semibold text-tactical-bg transition-transform duration-200 focus:translate-y-0;
+    @apply fixed left-3 top-3 z-50 -translate-y-16 border border-tactical-accent bg-tactical-panel px-3 py-2 text-sm font-medium text-tactical-accent transition-transform duration-150 focus:translate-y-0;
   }
 
   .app-shell {
-    background:
-      radial-gradient(circle at 18% 12%, rgb(208 168 92 / 0.13), transparent 29rem),
-      radial-gradient(circle at 78% 88%, rgb(122 166 122 / 0.10), transparent 34rem),
-      linear-gradient(135deg, #071014 0%, #0a1519 48%, #050b0d 100%);
-  }
-
-  .noise-overlay {
-    pointer-events: none;
-    position: absolute;
-    inset: 0;
-    z-index: 1;
-    opacity: 0.13;
-    mix-blend-mode: soft-light;
-    background-image:
-      radial-gradient(circle at 1px 1px, rgb(255 255 255 / 0.45) 1px, transparent 0),
-      linear-gradient(90deg, rgb(208 168 92 / 0.10) 1px, transparent 1px),
-      linear-gradient(0deg, rgb(208 168 92 / 0.08) 1px, transparent 1px);
-    background-size: 3px 3px, 4rem 4rem, 4rem 4rem;
-  }
-
-  .scene-vignette {
-    pointer-events: none;
-    position: absolute;
-    inset: 0;
-    z-index: 2;
-    background:
-      linear-gradient(90deg, rgb(7 16 20 / 0.72), transparent 22%, transparent 72%, rgb(7 16 20 / 0.50)),
-      radial-gradient(circle at 50% 52%, transparent 42%, rgb(0 0 0 / 0.46) 100%);
+    background: theme('colors.tactical.bg');
   }
 
   .panel {
-    @apply rounded-2xl border border-tactical-border/90 backdrop-blur-md;
-    background:
-      radial-gradient(circle at 12% 0%, rgb(208 168 92 / 0.13), transparent 18rem),
-      linear-gradient(180deg, rgb(18 32 37 / 0.94), rgb(7 16 19 / 0.96));
-    box-shadow:
-      inset 0 1px 0 rgb(255 255 255 / 0.08),
-      inset 0 -24px 48px rgb(3 11 13 / 0.30),
-      0 18px 48px rgb(0 9 12 / 0.48);
-  }
-
-  .hud-text {
-    @apply font-mono text-xs;
+    @apply border border-tactical-border bg-tactical-panel/95;
   }
 
   .eyebrow {
-    @apply text-[0.68rem] font-semibold tracking-[0.18em] text-tactical-accent;
-    text-wrap: balance;
-  }
-
-  .soft-tag {
-    @apply inline-flex items-center rounded-md border border-tactical-border/80 px-2 py-1 font-mono text-[10px] font-medium tracking-[0.12em];
+    @apply font-mono text-[0.62rem] font-semibold uppercase tracking-[0.22em] text-tactical-accent;
   }
 
   .tactical-button {
-    @apply rounded-lg border border-tactical-border/90 px-3 py-2 text-left font-mono text-xs disabled:cursor-not-allowed disabled:opacity-45;
-    background: rgb(10 20 24 / 0.72);
+    @apply border border-tactical-border bg-tactical-panel2/50 px-3 py-1.5 text-left font-mono text-[11px] uppercase tracking-wide disabled:cursor-not-allowed disabled:opacity-40;
   }
 
   .tactical-button:hover:not(:disabled) {
-    border-color: rgb(208 168 92 / 0.60);
-    background: rgb(20 33 38 / 0.86);
-    color: theme('colors.tactical.text');
-  }
-
-  .data-row {
-    @apply flex items-center justify-between gap-3 border-b border-tactical-border/40 py-2 font-mono text-xs;
+    @apply border-tactical-accent/60 bg-tactical-panel2 text-tactical-text;
   }
 
   .legend-cell {
-    @apply rounded-lg border border-tactical-border/80;
-    background: rgb(9 18 23 / 0.72);
+    @apply border border-tactical-border/70 bg-tactical-panel2/40;
   }
 
   .legend-cell:hover {
-    border-color: rgb(208 168 92 / 0.60);
-    background: rgb(17 28 32 / 0.84);
+    @apply border-tactical-accent/50 bg-tactical-panel2/80;
   }
 
   .segmented-toggle {
-    @apply overflow-hidden rounded-xl border border-tactical-border/90 p-1;
-    background: rgb(7 14 18 / 0.72);
+    @apply border border-tactical-border bg-tactical-bg/60;
   }
 
   .segmented-toggle > button + button {
-    @apply border-l border-tactical-border/70;
-  }
-
-  .segmented-toggle > button {
-    @apply rounded-lg;
+    @apply border-l border-tactical-border;
   }
 
   .skeleton-bar {
-    @apply overflow-hidden rounded-full bg-tactical-border/50;
+    @apply overflow-hidden bg-tactical-border/50;
     position: relative;
   }
 

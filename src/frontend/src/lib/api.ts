@@ -1,4 +1,4 @@
-import { CloudMeta, BoundingBox, ViewshedInfo, ThreatInfo, FieldsInfo } from './types'
+import { CloudMeta, BoundingBox, ViewshedInfo, ThreatInfo, FieldsInfo, WorldCoordinate, ViewshedResult } from './types'
 
 // Relative URLs: dev goes through the Vite proxy (vite.config.ts), prod is
 // served same-origin. Required GETs throw; optional ones resolve to null.
@@ -43,3 +43,15 @@ const bin = async (p: string): Promise<Uint8Array | null> => {
 }
 export const fetchDanger = () => bin('/api/danger')
 export const fetchDepth = () => bin('/api/depth')
+
+export const fetchViewshedAt = async (world: WorldCoordinate): Promise<ViewshedResult> => {
+  const r = await fetch('/api/viewshed', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ x: world[0], y: world[1], z: world[2] }),
+  })
+  if (!r.ok) throw new Error(`POST /api/viewshed → ${r.status}`)
+  const info = r.headers.get('x-viewshed-info')
+  if (!info) throw new Error('POST /api/viewshed missing x-viewshed-info')
+  return { flags: new Uint8Array(await r.arrayBuffer()), info: JSON.parse(info) as ViewshedInfo }
+}

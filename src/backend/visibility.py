@@ -22,16 +22,19 @@ import json
 import math
 from pathlib import Path
 import sys
+from typing import TYPE_CHECKING
 
 import numpy as np
 
+if TYPE_CHECKING:
+    from affine import Affine
+
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from src.backend.app import MAX_POINTS, VOXEL, pack_cloud  # noqa: E402
 from src.backend.terrain import BUILD, DATA, build_dsm, save_geotiff, world_to_pixel  # noqa: E402
 
 
-def viewshed(dsm: np.ndarray, transform, res: float, obs_xy: tuple[float, float],
+def viewshed(dsm: np.ndarray, transform: Affine, res: float, obs_xy: tuple[float, float],
              obs_z: float | None = None, eye_h: float = 1.7, target_h: float = 1.7,
              max_range: float = 1200.0, facing_deg: float = 0.0,
              arc_deg: float = 360.0) -> tuple[np.ndarray, tuple[int, int], float]:
@@ -100,6 +103,8 @@ def _pick_observer(boxes_path: Path, box_id: str | None,
 
 
 def main() -> None:
+    from src.backend.app import MAX_POINTS, VOXEL, pack_cloud
+
     ap = argparse.ArgumentParser(description="Compute a viewshed from an observer")
     ap.add_argument("--res", type=float, default=1.0)
     ap.add_argument("--range", type=float, default=1200.0, dest="max_range")

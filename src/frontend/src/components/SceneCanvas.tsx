@@ -7,11 +7,13 @@ import * as api from '../lib/api'
 export default function SceneCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const viewerRef = useRef<Viewer | null>(null)
+  const viewshedRequestRef = useRef(0)
   const colorMode = useStore((s) => s.colorMode)
   const overlayOnRgb = useStore((s) => s.overlayOnRgb)
   const layers = useStore((s) => s.layers)
   const classVisibility = useStore((s) => s.classVisibility)
   const selected = useStore((s) => s.selected)
+  const selectedCursor = useStore((s) => s.selectedCursor)
 
   useEffect(() => {
     if (!canvasRef.current) return
@@ -19,7 +21,8 @@ export default function SceneCanvas() {
     const viewer = new Viewer(canvasRef.current)
     viewerRef.current = viewer
     if (import.meta.env.DEV) (window as unknown as { viewer: Viewer }).viewer = viewer
-    viewer.onPick((b, point) => useStore.getState().select(b, point ?? null))
+    viewer.onCursorScreen((screen) => useStore.getState().setSelectedCursorScreen(screen))
+    viewer.onPick((b, cursor) => useStore.getState().select(b, cursor ?? null))
     viewer.onPickThreat((p, point) => useStore.getState().selectThreat(p, point ?? null))
 
     ;(async () => {
@@ -69,6 +72,25 @@ export default function SceneCanvas() {
   useEffect(() => {
     viewerRef.current?.setSelected(selected?.id ?? null)
   }, [selected])
+
+  useEffect(() => {
+    viewerRef.current?.setCursorAnchor(selectedCursor?.world ?? null)
+  }, [selectedCursor?.world])
+
+  useEffect(() => {
+    const viewer = viewerRef.current
+    if (!viewer || colorMode !== 'viewshed' || !selectedCursor) return
+    const request = ++viewshedRequestRef.current
+    api.fetchViewshedAt(selectedCursor.world)
+      .then(({ flags, info }) => {
+        if (request !== viewshedRequestRef.current || useStore.getState().colorMode !== 'viewshed') return
+        viewer.setViewshed(flags, info)
+        useStore.getState().setViewshed(info)
+      })
+      .catch((e) => {
+        if (import.meta.env.DEV) console.warn(e)
+      })
+  }, [colorMode, selectedCursor?.world])
 
   return <canvas ref={canvasRef} className="block w-full h-full" />
 }

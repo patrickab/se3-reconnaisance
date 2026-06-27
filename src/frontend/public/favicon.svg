@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="SE3 Recon">
+  <rect width="64" height="64" rx="14" fill="#071014"/>
+  <path d="M12 39 31 12l21 40H25l7-11h10L31 21 18 39z" fill="#d0a85c"/>
+  <path d="M13 48h38" stroke="#7aa67a" stroke-width="4" stroke-linecap="round"/>
+</svg>

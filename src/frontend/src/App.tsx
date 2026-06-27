@@ -16,8 +16,6 @@ export default function App() {
       </a>
       <main id="scene-viewer" className="relative min-w-0 flex-1" aria-label="3D tactical scene" tabIndex={-1}>
         <SceneCanvas />
-        <div className="noise-overlay" aria-hidden="true" />
-        <div className="scene-vignette" aria-hidden="true" />
         <Hud />
         <ObjectPopup />
         <ThreatPanel />
@@ -39,7 +37,7 @@ export default function App() {
             <div className="panel max-w-md p-6">
               <div className="eyebrow text-tactical-danger">Data link unavailable</div>
               <div className="mt-3 text-2xl font-semibold leading-none tracking-[-0.04em] text-tactical-text">We could not load the scene</div>
-              <div className="mt-4 rounded-xl border border-tactical-danger/40 bg-tactical-danger/10 px-3 py-2 font-mono text-xs text-tactical-text">{error}</div>
+              <div className="mt-4 border border-tactical-danger/40 bg-tactical-danger/10 px-3 py-2 font-mono text-xs text-tactical-text">{error}</div>
               <div className="mt-4 text-sm leading-6 text-tactical-secondary">Start the backend and confirm `/api/meta` responds before using the viewer.</div>
             </div>
           </div>

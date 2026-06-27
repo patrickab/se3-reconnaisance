@@ -6,6 +6,8 @@ export interface CloudMeta {
   span: [number, number, number]
 }
 
+export type WorldCoordinate = [number, number, number]
+
 export interface BoundingBox {
   id: string
   name: string
@@ -74,4 +76,13 @@ export type ClassVisibility = Record<BoxClass, boolean>
 export interface ScreenPoint {
   x: number
   y: number
+}
+export interface SceneCursor {
+  screen: ScreenPoint
+  world: WorldCoordinate
+}
+
+export interface ViewshedResult {
+  flags: Uint8Array
+  info: ViewshedInfo
 }

@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { BoundingBox, BoxClass, ClassVisibility, CloudMeta, ColorMode, FieldsInfo, LayerKey, Layers, ScreenPoint, ThreatInfo, ThreatPosition, ViewshedInfo } from './types'
+import { BoundingBox, BoxClass, ClassVisibility, CloudMeta, ColorMode, FieldsInfo, LayerKey, Layers, SceneCursor, ScreenPoint, ThreatInfo, ThreatPosition, ViewshedInfo } from './types'
 
 interface AppState {
   meta: CloudMeta | null
@@ -18,19 +18,21 @@ interface AppState {
   layers: Layers
   classVisibility: ClassVisibility
   selected: BoundingBox | null
-  selectedPoint: ScreenPoint | null
+  selectedCursor: SceneCursor | null
   selectedThreat: ThreatPosition | null
   selectedThreatPoint: ScreenPoint | null
 
   setData: (d: { meta: CloudMeta; boxes: BoundingBox[]; viewshedInfo: ViewshedInfo | null; threatInfo: ThreatInfo | null; fieldsInfo: FieldsInfo | null }) => void
   setReady: (r: { viewshedReady: boolean; threatReady: boolean; fieldsReady: boolean }) => void
+  setViewshed: (viewshedInfo: ViewshedInfo) => void
   setError: (error: string) => void
   setColorMode: (colorMode: ColorMode) => void
   setOverlayOnRgb: (overlayOnRgb: boolean) => void
   toggleLayer: (key: LayerKey) => void
   toggleClass: (key: BoxClass) => void
-  select: (selected: BoundingBox | null, selectedPoint?: ScreenPoint | null) => void
+  select: (selected: BoundingBox | null, selectedCursor?: SceneCursor | null) => void
   selectThreat: (selectedThreat: ThreatPosition | null, selectedThreatPoint?: ScreenPoint | null) => void
+  setSelectedCursorScreen: (screen: ScreenPoint) => void
 }
 
 const DEFAULT_CLASS_VISIBILITY: ClassVisibility = {
@@ -58,17 +60,21 @@ export const useStore = create<AppState>((set) => ({
   layers: { points: true, boxes: true, observer: true, threats: true },
   classVisibility: DEFAULT_CLASS_VISIBILITY,
   selected: null,
-  selectedPoint: null,
+  selectedCursor: null,
   selectedThreat: null,
   selectedThreatPoint: null,
 
   setData: (d) => set({ ...d, loading: false, error: null }),
   setReady: ({ viewshedReady, threatReady, fieldsReady }) => set({ viewshedReady, threatReady, fieldsReady }),
+  setViewshed: (viewshedInfo) => set({ viewshedInfo, viewshedReady: true }),
   setError: (error) => set({ error, loading: false }),
   setColorMode: (colorMode) => set({ colorMode }),
   setOverlayOnRgb: (overlayOnRgb) => set({ overlayOnRgb }),
   toggleLayer: (key) => set((s) => ({ layers: { ...s.layers, [key]: !s.layers[key] } })),
   toggleClass: (key) => set((s) => ({ classVisibility: { ...s.classVisibility, [key]: !s.classVisibility[key] } })),
-  select: (selected, selectedPoint = null) => set({ selected, selectedPoint, selectedThreat: null }),
-  selectThreat: (selectedThreat, selectedThreatPoint = null) => set({ selectedThreat, selectedThreatPoint, selected: null }),
+  select: (selected, selectedCursor = null) => set({ selected, selectedCursor, selectedThreat: null }),
+  selectThreat: (selectedThreat, selectedThreatPoint = null) => set({ selectedThreat, selectedThreatPoint, selected: null, selectedCursor: null }),
+  setSelectedCursorScreen: (screen) => set((s) => (
+    s.selectedCursor ? { selectedCursor: { ...s.selectedCursor, screen } } : {}
+  )),
 }))

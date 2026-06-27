@@ -7,3 +7,11 @@ export function w2v(p: V3, origin: V3, span: V3): V3 {
   const cz = origin[2] + span[2] / 2
   return [p[0] - cx, p[2] - cz, -(p[1] - cy)]
 }
+
+// View space → World (UTM E, N, elev), inverse of w2v().
+export function v2w(p: V3, origin: V3, span: V3): V3 {
+  const cx = origin[0] + span[0] / 2
+  const cy = origin[1] + span[1] / 2
+  const cz = origin[2] + span[2] / 2
+  return [p[0] + cx, -p[2] + cy, p[1] + cz]
+}

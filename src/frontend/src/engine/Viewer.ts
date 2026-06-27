@@ -1,9 +1,9 @@
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
-import { BoundingBox, ClassVisibility, CloudMeta, ColorMode, FieldsInfo, LayerKey, ThreatInfo, ThreatPosition, ViewshedInfo } from '../lib/types'
+import { BoundingBox, ClassVisibility, CloudMeta, ColorMode, FieldsInfo, LayerKey, SceneCursor, ScreenPoint, ThreatInfo, ThreatPosition, ViewshedInfo, WorldCoordinate } from '../lib/types'
 import { CLASS_COLORS, TURBO } from '../lib/colors'
 import { fetchCloud, fetchViewshed, fetchThreat, fetchDanger, fetchDepth } from '../lib/api'
-import { w2v } from '../lib/utils'
+import { v2w, w2v } from '../lib/utils'
 
 // Module-level cache: the 54 MB cloud is fetched at most once per page load,
 // surviving React StrictMode double-mounts and component remounts.
@@ -39,13 +39,17 @@ export class Viewer {
   private keys = new Set<string>()
 
   private points?: THREE.Points
+  private meta?: CloudMeta
   private colors: Partial<Record<ColorMode, THREE.BufferAttribute>> = {}
   private boxGroup = new THREE.Group()
   private observerGroup = new THREE.Group()
   private threatGroup = new THREE.Group()
   private threatPickables: THREE.Mesh[] = []
-  private pickCb: (box: BoundingBox | null, point?: { x: number; y: number }) => void = () => {}
+  private pickCb: (box: BoundingBox | null, cursor?: SceneCursor) => void = () => {}
   private pickThreatCb: (p: ThreatPosition | null, point?: { x: number; y: number }) => void = () => {}
+  private cursorScreenCb: (screen: ScreenPoint) => void = () => {}
+  private cursorAnchor?: WorldCoordinate
+  private lastCursorScreen?: ScreenPoint
   private boxById = new Map<string, BoundingBox>()
   private boxTempMin = 0
   private boxTempMax = 1
@@ -68,6 +72,7 @@ export class Viewer {
     this.controls = new OrbitControls(this.camera, canvas)
     this.controls.enableDamping = true
     this.controls.dampingFactor = 0.08
+    this.raycaster.params.Points.threshold = 2.5
 
     this.ro = new ResizeObserver(() => this.resize())
     this.ro.observe(canvas)
@@ -79,6 +84,7 @@ export class Viewer {
       this.raf = requestAnimationFrame(loop)
       this.apply(this.clock.getDelta())
       this.controls.update()
+      this.emitCursorScreen()
       this.renderer.render(this.scene, this.camera)
     }
     loop()
@@ -87,6 +93,7 @@ export class Viewer {
   /** Fetch the cloud + viewshed + threat and build the whole scene. Idempotent. */
   async load(meta: CloudMeta, boxes: BoundingBox[], vs: ViewshedInfo | null,
              threat: ThreatInfo | null, fields: FieldsInfo | null): Promise<{ viewshed: boolean; threat: boolean; fields: boolean }> {
+    this.meta = meta
     const [, , sz] = meta.span
     const [sx, sy] = meta.span
 
@@ -135,16 +142,7 @@ export class Viewer {
     this.colors.rgb = new THREE.BufferAttribute(colRGB, 3)
     this.colors.height = new THREE.BufferAttribute(colHGT, 3)
     this.colRGBArr = colRGB
-    if (vsFlags) {
-      const colVS = new Float32Array(n * 3)
-      for (let i = 0; i < n; i++) {
-        const seen = vsFlags[i]
-        colVS[i * 3] = srgb2lin(seen ? 1 : 0.12) // seen → red, dead ground → green
-        colVS[i * 3 + 1] = srgb2lin(seen ? 0.18 : 0.72)
-        colVS[i * 3 + 2] = srgb2lin(seen ? 0.18 : 0.4)
-      }
-      this.colors.viewshed = new THREE.BufferAttribute(colVS, 3)
-    }
+    if (vsFlags) this.colors.viewshed = this.buildViewshedColors(vsFlags)
     if (thFlags) {
       const colTH = new Float32Array(n * 3)
       for (let i = 0; i < n; i++) {
@@ -275,12 +273,29 @@ export class Viewer {
     })
   }
 
-  onPick(cb: (box: BoundingBox | null, point?: { x: number; y: number }) => void) {
+  setViewshed(flags: Uint8Array, info: ViewshedInfo) {
+    if (!this.meta) return
+    this.colors.viewshed = this.buildViewshedColors(flags)
+    this.buildObserver(info, this.meta)
+    if (this.colorMode === 'viewshed') this.setColorMode('viewshed')
+  }
+
+  onPick(cb: (box: BoundingBox | null, cursor?: SceneCursor) => void) {
     this.pickCb = cb
   }
 
   onPickThreat(cb: (p: ThreatPosition | null, point?: { x: number; y: number }) => void) {
     this.pickThreatCb = cb
+  }
+
+  onCursorScreen(cb: (screen: ScreenPoint) => void) {
+    this.cursorScreenCb = cb
+  }
+
+  setCursorAnchor(world: WorldCoordinate | null) {
+    this.cursorAnchor = world ?? undefined
+    this.lastCursorScreen = undefined
+    this.emitCursorScreen()
   }
 
   dispose() {
@@ -423,20 +438,37 @@ export class Viewer {
     }
   }
 
+  private buildViewshedColors(flags: Uint8Array) {
+    const colVS = new Float32Array(flags.length * 3)
+    for (let i = 0; i < flags.length; i++) {
+      const seen = flags[i]
+      colVS[i * 3] = srgb2lin(seen ? 1 : 0.12) // seen → red, dead ground → green
+      colVS[i * 3 + 1] = srgb2lin(seen ? 0.18 : 0.72)
+      colVS[i * 3 + 2] = srgb2lin(seen ? 0.18 : 0.4)
+    }
+    return new THREE.BufferAttribute(colVS, 3)
+  }
+
   private buildObserver(vs: ViewshedInfo, meta: CloudMeta) {
+    this.clearObserver()
     const [vx, vy, vz] = w2v(vs.observer_world, meta.origin, meta.span)
     const marker = new THREE.Mesh(
       new THREE.OctahedronGeometry(6),
       new THREE.MeshBasicMaterial({ color: 0xffe14d })
     )
     marker.position.set(vx, vy, vz)
-    const ring = new THREE.Mesh(
-      new THREE.RingGeometry(vs.params.range_m - 1, vs.params.range_m, 96),
-      new THREE.MeshBasicMaterial({ color: 0xffe14d, transparent: true, opacity: 0.3, side: THREE.DoubleSide })
-    )
-    ring.rotation.x = -Math.PI / 2
-    ring.position.set(vx, -meta.span[2] / 2, vz)
-    this.observerGroup.add(marker, ring)
+    this.observerGroup.add(marker)
+  }
+
+  private clearObserver() {
+    this.observerGroup.children.forEach((o) => {
+      const mesh = o as THREE.Mesh
+      mesh.geometry?.dispose()
+      const mat = mesh.material as THREE.Material | THREE.Material[]
+      if (Array.isArray(mat)) mat.forEach((x) => x.dispose())
+      else mat?.dispose()
+    })
+    this.observerGroup.clear()
   }
 
   private onKey = (e: KeyboardEvent) => {
@@ -516,7 +548,26 @@ export class Viewer {
     this.renderer.setSize(w, h, false)
   }
 
+  private emitCursorScreen() {
+    if (!this.meta || !this.cursorAnchor) return
+    const [x, y, z] = w2v(this.cursorAnchor, this.meta.origin, this.meta.span)
+    const projected = new THREE.Vector3(x, y, z).project(this.camera)
+    const r = this.canvas.getBoundingClientRect()
+    const screen = {
+      x: r.left + (projected.x * 0.5 + 0.5) * r.width,
+      y: r.top + (-projected.y * 0.5 + 0.5) * r.height,
+    }
+    if (
+      this.lastCursorScreen &&
+      Math.abs(this.lastCursorScreen.x - screen.x) < 0.5 &&
+      Math.abs(this.lastCursorScreen.y - screen.y) < 0.5
+    ) return
+    this.lastCursorScreen = screen
+    this.cursorScreenCb(screen)
+  }
+
   private onClick = (e: MouseEvent) => {
+    if (!this.meta) return
     const r = this.canvas.getBoundingClientRect()
     const ndc = new THREE.Vector2(
       ((e.clientX - r.left) / r.width) * 2 - 1,
@@ -529,7 +580,21 @@ export class Viewer {
       this.pickThreatCb(th.object.userData.threat as ThreatPosition, { x: e.clientX, y: e.clientY })
       return
     }
-    const hit = this.raycaster.intersectObjects(this.boxGroup.children, false)[0]
-    this.pickCb(hit ? this.boxById.get(hit.object.userData.id) ?? null : null, { x: e.clientX, y: e.clientY })
+    const boxHit = this.raycaster.intersectObjects(this.boxGroup.children, false)[0]
+    if (boxHit) {
+      const cursor = this.sceneCursor(e, boxHit.point)
+      this.pickCb(this.boxById.get(boxHit.object.userData.id) ?? null, cursor)
+      return
+    }
+    const pointHit = this.points ? this.raycaster.intersectObject(this.points, false)[0] : undefined
+    this.pickCb(null, pointHit ? this.sceneCursor(e, pointHit.point) : undefined)
+  }
+
+  private sceneCursor(e: MouseEvent, point: THREE.Vector3): SceneCursor {
+    if (!this.meta) throw new Error('Cannot resolve cursor before scene metadata loads')
+    return {
+      screen: { x: e.clientX, y: e.clientY },
+      world: v2w([point.x, point.y, point.z], this.meta.origin, this.meta.span),
+    }
   }
 }
