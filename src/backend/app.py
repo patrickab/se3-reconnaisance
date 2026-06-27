@@ -326,7 +326,9 @@ def recompute(req: RecomputeReq | None = None) -> dict:
         enemies = [
             {"e": u.world[0], "n": u.world[1], "u": u.world[2],
              # sniper_op is the legacy key threat_template expects; map sniper → sniper_op
-             "type": "sniper_op" if u.unit_type.value == "sniper" else u.unit_type.value}
+             "type": "sniper_op" if u.unit_type.value == "sniper" else u.unit_type.value,
+             # operator-set heading — orients the sector of fire / kill zone (not the avenue)
+             "azimuth": u.azimuth}
             for u in UNITS.values() if u.side.value == "hostile"
         ]
 

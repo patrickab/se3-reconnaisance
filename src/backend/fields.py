@@ -72,8 +72,6 @@ def run(side: str = "west", res: float = 2.0) -> dict:
     dsm, transform, bounds, (h, w) = t["dsm"], t["transform"], t["bounds"], t["shape"]
     threat = json.loads((BUILD / "threat.json").read_text())
     enemies = threat["positions"]
-    # same avenue the laydown was templated against (operator-placed or auto)
-    aa_cx, aa_cy = threat["avenue_centroid"]
 
     # coordinate grids (cell centres, UTM) for range / distance maths
     cols, rows = np.meshgrid(np.arange(w), np.arange(h))
@@ -89,7 +87,7 @@ def run(side: str = "west", res: float = 2.0) -> dict:
             continue
         n_direct += 1
         E, N, U = e["world"]
-        facing = np.degrees(np.arctan2(aa_cy - N, aa_cx - E))
+        facing = float(e["facing_deg"])   # operator-set heading (viewshed math angle), set by threat_template
         dist = np.hypot(gx - E, gy - N)
         pr = p_hit(dist, prof["eff"], prof["mx"])
         for k, th in TARGETS.items():
