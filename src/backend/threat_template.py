@@ -46,7 +46,15 @@ def from_manual(enemies: list[dict], friendly: list[tuple[float, float, float]] 
         unit = resolve_unit(typ)
         role = unit.role.value if unit else "observer"
         arc = unit.obs_arc if unit else 0
-        facing = 0.0 if role == "indirect" else float(math.degrees(math.atan2(fy - N, fx - E)))
+        az = en.get("azimuth")
+        if role == "indirect":
+            facing = 0.0                                   # indirect fire has no sector of fire
+        elif az is not None:
+            # operator's placed heading: compass bearing (grid-north, CW) → viewshed math angle (0=E, CCW)
+            facing = 90.0 - float(az)
+        else:
+            # no heading given (e.g. click-placed) → orient onto our positions, else scene centre
+            facing = float(math.degrees(math.atan2(fy - N, fx - E)))
         positions.append({
             "id": f"red_{i}", "role": role, "type": typ,
             "world": [round(E, 1), round(N, 1), round(U, 1)],
