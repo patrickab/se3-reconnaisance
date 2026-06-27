@@ -15,7 +15,7 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 import numpy as np
@@ -120,7 +120,10 @@ def clear_laydown() -> None:
     open blank (terrain + object boxes only) until the operator places the enemy
     and analyses. Terrain artifacts (DSM, viewshed) are independent and kept.
     """
-    for name in ("threat.json", "threat.bin", "danger.bin", "depth.bin", "fields.json"):
+    for f in (*BUILD.glob("danger_*.bin"), *BUILD.glob("depth_*.bin"), *BUILD.glob("reason_*.bin"),
+              *BUILD.glob("conf_*.bin"), *BUILD.glob("suppress_*.bin")):
+        f.unlink(missing_ok=True)
+    for name in ("threat.json", "threat.bin", "danger.bin", "depth.bin", "reason.bin", "conf.bin", "fields.json"):
         (BUILD / name).unlink(missing_ok=True)
 
 
@@ -237,14 +240,38 @@ def _bin(name: str) -> Response:
     return Response(f.read_bytes(), media_type="application/octet-stream")
 
 
+# risk surfaces are projected per TARGET CLASS; ?class= picks who's moving (default dismount)
+_RISK_CLASSES = {"dismount", "light_veh", "armour"}
+
+
+def _class_bin(kind: str, cls: str) -> Response:
+    c = cls if cls in _RISK_CLASSES else "dismount"
+    return _bin(f"{kind}_{c}.bin")
+
+
 @app.get("/api/danger")
-def danger() -> Response:
-    return _bin("danger.bin")
+def danger(cls: str = Query("dismount", alias="class")) -> Response:
+    return _class_bin("danger", cls)
 
 
 @app.get("/api/depth")
-def depth() -> Response:
-    return _bin("depth.bin")
+def depth(cls: str = Query("dismount", alias="class")) -> Response:
+    return _class_bin("depth", cls)
+
+
+@app.get("/api/reason")
+def reason(cls: str = Query("dismount", alias="class")) -> Response:  # 0 out-of-range 1 dead-ground 2 cover 3 exposed
+    return _class_bin("reason", cls)
+
+
+@app.get("/api/conf")
+def conf(cls: str = Query("dismount", alias="class")) -> Response:    # intel-confidence the cell is threatened
+    return _class_bin("conf", cls)
+
+
+@app.get("/api/suppress")
+def suppress(cls: str = Query("dismount", alias="class")) -> Response:  # suppression (beaten zone) field
+    return _class_bin("suppress", cls)
 
 
 @app.get("/api/fields-info")
@@ -339,7 +366,9 @@ def recompute(req: RecomputeReq | None = None) -> dict:
              # sniper_op is the legacy key threat_template expects; map sniper → sniper_op
              "type": "sniper_op" if u.unit_type.value == "sniper" else u.unit_type.value,
              # operator-set heading — orients the sector of fire / kill zone (not the avenue)
-             "azimuth": u.azimuth}
+             "azimuth": u.azimuth,
+             # intel quality — modulates risk-zone confidence in the projection
+             "confidence": u.confidence}
             for u in UNITS.values() if u.side.value == "hostile"
         ]
 

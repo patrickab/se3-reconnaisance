@@ -40,34 +40,55 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from src.backend.app import MAX_POINTS, PACK, VOXEL, pack_cloud, terrain_for  # noqa: E402
 from src.backend.terrain import BUILD, DATA, box_polygon, save_geotiff  # noqa: E402
-from src.backend.units import resolve_unit  # noqa: E402
+from src.backend.units import TARGET_HEIGHT_M, resolve_unit  # noqa: E402
 from src.backend.visibility import viewshed  # noqa: E402
 
 if TYPE_CHECKING:
     from affine import Affine
 
-TARGETS = {"dismount": 1.7, "mount": 2.5}  # standing soldier vs vehicle
+# target classes (units.TARGET_HEIGHT_M): dismount 1.7 m · light_veh 2.5 m · armour 2.5 m.
+# light_veh + armour share a LOS height, so the viewshed is still only ever traced at two heights.
+CLASSES = list(TARGET_HEIGHT_M)
+HEIGHTS = sorted(set(TARGET_HEIGHT_M.values()))
+KILL_EPS = 0.05   # a cell counts toward a class's engagement depth once P(kill) clears this
 
 
 def _profile(typ: str) -> dict:
-    """Resolve a threat-template type key to the fields.py projection profile.
-
-    Single source of truth is units.UNIT_CATALOG; this helper just reshapes it
-    into the (fire/eye_h/eff/mx/arc) dict the projection loop below reads.
-    """
+    """Reshape a units.UNIT_CATALOG entry into the projection dict the loop reads."""
     u = resolve_unit(typ)
     if u is None:
         raise KeyError(f"unknown enemy type in threat laydown: {typ!r}")
     return {
         "fire": u.fire_kind.value, "eye_h": u.height_agl_m,
-        "eff": u.eff_range_m, "mx": u.max_range_m, "arc": u.obs_arc,
+        "eff": u.eff_range_m, "mx": u.max_range_m, "mn": u.min_range_m,
+        "obs_arc": u.obs_arc, "weapon_arc": u.weapon_arc,
+        "p0": u.ph_p0, "d50": max(1.0, u.ph_shoulder * u.eff_range_m), "beta": u.ph_beta,
+        "s0": u.supp_s0, "kill": u.eff,   # P(kill|hit) per target class
     }
 
 
-def p_hit(dist: np.ndarray, eff: float, mx: float) -> np.ndarray:
-    """Range-graduated hit probability: ~1 inside effective, fading to ~0.2 at max, 0 beyond."""
-    p = np.where(dist <= eff, 1.0, 1.0 - 0.8 * (dist - eff) / max(1.0, mx - eff))
-    return np.clip(np.where(dist <= mx, p, 0.0), 0.0, 1.0)
+def p_hit(dist: np.ndarray, p0: float, d50: float, beta: float, mn: float, mx: float) -> np.ndarray:
+    """Per-weapon single-shot P(hit) vs a point target: Hill plateau p0, knee at d50, steepness
+    beta (high = accurate-far-then-cliff, low = far-but-inaccurate). Zero outside [mn, mx]."""
+    p = p0 / (1.0 + (dist / d50) ** beta)
+    inside = (dist >= mn) & (dist <= mx)
+    return np.clip(np.where(inside, p, 0.0), 0.0, 1.0).astype(np.float32)
+
+
+def p_supp(dist: np.ndarray, s0: float, mx: float) -> np.ndarray | None:
+    """Area suppression: a wide, low beaten-zone field (MGs / autofire). None for precision weapons."""
+    if s0 <= 0.0:
+        return None
+    s = s0 / (1.0 + (dist / (1.05 * mx)) ** 3)
+    return np.clip(np.where(dist <= 1.1 * mx, s, 0.0), 0.0, 1.0).astype(np.float32)
+
+
+def _arc_mask(gx: np.ndarray, gy: np.ndarray, e: float, n: float, facing_deg: float, arc_deg: float) -> np.ndarray:
+    """Cells within ±arc/2 of facing (viewshed math-angle frame). arc>=360 → all True."""
+    if arc_deg >= 360:
+        return np.ones(gx.shape, dtype=bool)
+    az = np.degrees(np.arctan2(gy - n, gx - e))
+    return np.abs((az - facing_deg + 180.0) % 360.0 - 180.0) <= arc_deg / 2.0
 
 
 # Per-shooter viewshed cache. A shooter's line-of-sight depends only on its own
@@ -80,17 +101,18 @@ _VIS_CAP = 512  # ~0.25 MB/grid; flushed wholesale past the cap (no LRU until ch
 
 
 def _shooter_vis(dsm: np.ndarray, transform: Affine, res: float, e: dict, prof: dict,
-                 target_h: float, target_key: str) -> np.ndarray:
-    """Viewshed for one shooter against one target height, memoised on its content key."""
+                 target_h: float) -> np.ndarray:
+    """Observation viewshed for one shooter at one target height — traced at the wide obs arc and
+    memoised on its content key (position, heading, type, height) so editing one unit re-sweeps one."""
     E, N, U = e["world"]
-    key = (round(E, 1), round(N, 1), round(U, 1), e["facing_deg"], e["type"], target_key, res)
+    key = (round(E, 1), round(N, 1), round(U, 1), e["facing_deg"], e["type"], round(target_h, 1), res)
     vis = _VIS_CACHE.get(key)
     if vis is None:
         if len(_VIS_CACHE) >= _VIS_CAP:
             _VIS_CACHE.clear()
         vis, _, _ = viewshed(dsm, transform, res, (E, N), obs_z=U, eye_h=prof["eye_h"],
                              target_h=target_h, max_range=prof["mx"], facing_deg=float(e["facing_deg"]),
-                             arc_deg=prof["arc"])
+                             arc_deg=prof["obs_arc"])
         _VIS_CACHE[key] = vis
     return vis
 
@@ -107,20 +129,45 @@ def run(side: str = "west", res: float = 2.0) -> dict:
     gx = transform.c + (cols + 0.5) * transform.a
     gy = transform.f - (rows + 0.5) * (-transform.e)
 
-    depth = {k: np.zeros((h, w), np.int16) for k in TARGETS}      # engagement-area depth
-    direct = {k: np.zeros((h, w), np.float32) for k in TARGETS}   # P(hit) union, range-graded
+    # per TARGET-CLASS accumulators. P(kill) = P(hit) × P(kill|hit): vis×p_hit is P(hit); the
+    # eff[class] factor is P(kill|hit). A weapon with eff[class]==0 (a rifle vs armour) drops out.
+    depth = {c: np.zeros((h, w), np.int16) for c in CLASSES}      # engagement-area depth per class
+    direct = {c: np.zeros((h, w), np.float32) for c in CLASSES}   # P(kill) union per class
+    suppress = {c: np.zeros((h, w), np.float32) for c in CLASSES}  # suppression (beaten zone) per class
+    reach = {c: np.zeros((h, w), bool) for c in CLASSES}          # a class-killing weapon can RANGE the cell
+    conf = {c: np.zeros((h, w), np.float32) for c in CLASSES}     # intel-confidence the cell is threatened
+    observed = np.zeros((h, w), bool)     # union of all eyes (observation arc) — the indirect-fire cue
     n_direct = 0
     for e in enemies:
         prof = _profile(e["type"])
         if prof["fire"] != "direct":
             continue
         n_direct += 1
-        E, N, _U = e["world"]
-        pr = p_hit(np.hypot(gx - E, gy - N), prof["eff"], prof["mx"])  # range-graded P(hit), facing folded into viewshed
-        for k, th in TARGETS.items():
-            vis = _shooter_vis(dsm, transform, res, e, prof, th, k)
-            depth[k] += vis                                       # +1 per shooter that sees it
-            direct[k] = 1.0 - (1.0 - direct[k]) * (1.0 - vis * pr)  # probabilistic union
+        E, N, U = e["world"]
+        facing = float(e["facing_deg"])   # operator-set heading (= weapon PDF), viewshed math angle
+        ec = float(e.get("confidence", 1.0))
+        dist = np.hypot(gx - E, gy - N)
+        band = (dist >= prof["mn"]) & (dist <= prof["mx"])               # weapon range annulus
+        wmask = _arc_mask(gx, gy, E, N, facing, prof["weapon_arc"])      # LETHAL sector of fire
+        pr = p_hit(dist, prof["p0"], prof["d50"], prof["beta"], prof["mn"], prof["mx"])
+        sup = p_supp(dist, prof["s0"], prof["mx"])
+        # one viewshed per LOS height, traced at the wide OBSERVATION arc (memoised per shooter —
+        # editing one unit re-sweeps one unit); the lethal layer masks it to the weapon sector
+        # (LOS is arc-independent → no extra ray casts vs the old single-arc model).
+        vis_by_h = {th: _shooter_vis(dsm, transform, res, e, prof, th) for th in HEIGHTS}
+        observed |= vis_by_h[TARGET_HEIGHT_M["dismount"]]               # detection (eyes), full obs arc
+        for c in CLASSES:
+            kc = float(prof["kill"].get(c, 0.0))
+            if kc <= 0.0:
+                continue                                                # this weapon can't kill class c
+            vis_w = vis_by_h[TARGET_HEIGHT_M[c]] & wmask & band         # weapon-sector lethal LOS
+            kill = vis_w * pr * kc                                      # P(kill) contribution
+            direct[c] = 1.0 - (1.0 - direct[c]) * (1.0 - kill)         # probabilistic union
+            depth[c] += (kill > KILL_EPS)                              # +1 per weapon that can kill here
+            reach[c] |= band
+            conf[c] = np.maximum(conf[c], vis_w * ec)
+            if sup is not None:
+                suppress[c] = 1.0 - (1.0 - suppress[c]) * (1.0 - vis_w * sup * kc)
 
     # ---- pre-planned TRPs on terrain-forced chokepoints (point 4) ----
     box_mask = np.zeros((h, w), bool)
@@ -145,27 +192,39 @@ def run(side: str = "west", res: float = 2.0) -> dict:
         if len(trps) >= 4:
             break
 
-    # ---- indirect: in mortar range AND (observed by any eyes OR pre-registered) ----
+    # ---- indirect: range ANNULUS (min-range dead zone → max) AND (observed by any eyes OR a
+    #      pre-registered TRP). `observed` is the union of every unit's observation arc (above). ----
     in_range = np.zeros((h, w), bool)
+    ind_kill = {c: 0.0 for c in CLASSES}            # best indirect P(kill|hit) per class
     for e in enemies:
         prof = _profile(e["type"])
         if prof["fire"] != "indirect":
             continue
         E, N, _ = e["world"]
-        in_range |= np.hypot(gx - E, gy - N) <= prof["mx"]
-    observed = depth["dismount"] > 0
+        d = np.hypot(gx - E, gy - N)
+        ann = (d >= prof["mn"]) & (d <= prof["mx"])
+        in_range |= ann
+        for c in CLASSES:
+            kc = float(prof["kill"].get(c, 0.0))
+            if kc > 0.0:
+                reach[c] |= ann
+                ind_kill[c] = max(ind_kill[c], kc)
     indirect = in_range.astype(np.float32) * np.clip(0.6 * observed + 0.7 * trp, 0.0, 0.9)
 
-    # ---- cover (boxes stop rounds) reduces risk; combine to a continuous cost ----
+    # ---- cover (boxes stop rounds) reduces risk; combine into one continuous cost PER CLASS ----
     cover_near = np.clip(1.0 - distance_transform_edt(~box_mask) * res / 8.0, 0.0, 1.0)
-    for k in TARGETS:
-        d = direct[k]
-        emphasis = 1.0 + 0.35 * np.clip(depth[k] - 1, 0, None)    # kill zones (overlap) hurt more
-        cost = (d + 0.5 * indirect) * emphasis - 0.3 * cover_near
-        cost = np.clip(np.where(t["valid"] | box_mask, cost, 0.0), 0.0, 1.0)
-        save_geotiff(cost, transform, t["epsg"], BUILD / f"fields_cost_{k}.tif")
-        if k == "dismount":
-            cost_dismount = cost
+    valid = t["valid"]
+    costs, reasons = {}, {}
+    for c in CLASSES:
+        emphasis = 1.0 + 0.35 * np.clip(depth[c] - 1, 0, None)            # kill zones (overlap) hurt more
+        cost = (direct[c] + 0.5 * indirect * ind_kill[c]) * emphasis - 0.3 * cover_near
+        costs[c] = np.clip(np.where(valid | box_mask, cost, 0.0), 0.0, 1.0)
+        save_geotiff(costs[c], transform, t["epsg"], BUILD / f"fields_cost_{c}.tif")
+        # WHY a cell is (un)safe — "not seen" != "safe": canopy is concealment, only a box stops a
+        # round. (0 out-of-range, 1 dead-ground, 2 cover, 3 exposed)
+        seen = depth[c] > 0
+        near_cover = cover_near > 0.5
+        reasons[c] = np.where(seen, 3, np.where(near_cover, 2, np.where(reach[c], 1, 0))).astype(np.uint8)
     save_geotiff(depth["dismount"].astype("float32"), transform, t["epsg"], BUILD / "fields_depth.tif")
 
     # ---- per-web-point overlays for the viewer ----
@@ -178,29 +237,57 @@ def run(side: str = "west", res: float = 2.0) -> dict:
     pc = ((pts[:, 0] + ox - transform.c) / transform.a).astype(np.int64)
     prow = ((transform.f - (pts[:, 1] + oy)) / (-transform.e)).astype(np.int64)
     ok = (pc >= 0) & (pc < w) & (prow >= 0) & (prow < h)
-
-    danger_b = np.zeros(n, np.uint8)
-    danger_b[ok] = (cost_dismount[prow[ok], pc[ok]] * 255).astype(np.uint8)
-    depth_b = np.zeros(n, np.uint8)
-    depth_b[ok] = np.clip(depth["dismount"][prow[ok], pc[ok]], 0, 255).astype(np.uint8)
     BUILD.mkdir(parents=True, exist_ok=True)
-    (BUILD / "danger.bin").write_bytes(danger_b.tobytes())
-    (BUILD / "depth.bin").write_bytes(depth_b.tobytes())
 
+    def _sample(arr: np.ndarray, scale: float = 1.0) -> bytes:
+        b = np.zeros(n, np.uint8)
+        b[ok] = np.clip(arr[prow[ok], pc[ok]] * scale, 0, 255).astype(np.uint8)
+        return b.tobytes()
+
+    # one set per target class — the "show risk to" toggle picks which (default = dismount)
+    for c in CLASSES:
+        (BUILD / f"danger_{c}.bin").write_bytes(_sample(costs[c], 255))
+        (BUILD / f"depth_{c}.bin").write_bytes(_sample(depth[c].astype(np.float32)))
+        (BUILD / f"reason_{c}.bin").write_bytes(_sample(reasons[c].astype(np.float32)))
+        (BUILD / f"conf_{c}.bin").write_bytes(_sample(conf[c], 255))
+        (BUILD / f"suppress_{c}.bin").write_bytes(_sample(suppress[c], 255))
+
+    nv = max(1, int(valid.sum()))
+    def _pct(mask: np.ndarray) -> float:
+        return round(100 * float((mask & valid).sum()) / nv, 1)
+
+    def _class_stats(c: str) -> dict:
+        rc = reasons[c]
+        return {
+            "max_engagement_depth": int(depth[c].max()),
+            "pct_in_kill_zone": _pct(depth[c] >= 2),
+            "exposure": {
+                "pct_exposed": _pct(rc == 3), "pct_cover": _pct(rc == 2),
+                "pct_dead_ground": _pct(rc == 1), "pct_out_of_range": _pct(rc == 0),
+            },
+        }
+
+    dismount = _class_stats("dismount")
     info = {
         "side": side,
         "n_direct_shooters": n_direct,
-        "max_engagement_depth": int(depth["dismount"].max()),
+        "classes": CLASSES,
         "trps": trps,
-        "pct_in_kill_zone": round(100 * float((depth["dismount"] >= 2).sum() / max(1, t["valid"].sum())), 1),
-        "note": "depth = overlapping fields of fire (>=2 = mutually-supporting kill zone). "
-                "Concealment from vegetation not yet modelled (pending landcover.py).",
+        # top-level mirrors the dismount class (the default risk view / current frontend reads these)
+        "max_engagement_depth": dismount["max_engagement_depth"],
+        "pct_in_kill_zone": dismount["pct_in_kill_zone"],
+        "exposure": dismount["exposure"],
+        "per_class": {c: _class_stats(c) for c in CLASSES},
+        "note": "depth = overlapping fields of fire (>=2 = mutually-supporting kill zone). Risk is "
+                "per target class (dismount/light_veh/armour) — a weapon that can't kill a class is "
+                "omitted from its surface. dead_ground = hidden but NOT proven safe (vegetation is "
+                "concealment, not cover; pending landcover.py).",
     }
     (BUILD / "fields.json").write_text(json.dumps(info))
 
-    print(f"{n_direct} direct shooters projected | max engagement depth {info['max_engagement_depth']} "
-          f"| {info['pct_in_kill_zone']}% of ground in a >=2 kill zone | {len(trps)} TRPs on chokepoints")
-    print("wrote build/fields_cost_*.tif + fields_depth.tif + danger.bin + depth.bin + fields.json")
+    print(f"{n_direct} direct shooters | dismount depth {info['max_engagement_depth']} "
+          f"| {info['pct_in_kill_zone']}% in a >=2 kill zone | {len(trps)} TRPs | classes {CLASSES}")
+    print("wrote build/fields_cost_*.tif + fields_depth.tif + {danger,depth,reason,conf,suppress}_<class>.bin + fields.json")
     return info
 
 
