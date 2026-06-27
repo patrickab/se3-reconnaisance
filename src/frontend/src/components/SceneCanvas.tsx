@@ -10,6 +10,8 @@ export default function SceneCanvas() {
   const viewshedRequestRef = useRef(0)
   const colorMode = useStore((s) => s.colorMode)
   const overlayOnRgb = useStore((s) => s.overlayOnRgb)
+  const placing = useStore((s) => s.placing)
+  const friendly = useStore((s) => s.friendly)
   const layers = useStore((s) => s.layers)
   const classVisibility = useStore((s) => s.classVisibility)
   const selected = useStore((s) => s.selected)
@@ -24,6 +26,7 @@ export default function SceneCanvas() {
     viewer.onCursorScreen((screen) => useStore.getState().setSelectedCursorScreen(screen))
     viewer.onPick((b, cursor) => useStore.getState().select(b, cursor ?? null))
     viewer.onPickThreat((p, point) => useStore.getState().selectThreat(p, point ?? null))
+    viewer.onPlaceFriendly((e, n) => useStore.getState().addFriendly(e, n))
 
     ;(async () => {
       try {
@@ -58,6 +61,14 @@ export default function SceneCanvas() {
   useEffect(() => {
     viewerRef.current?.setOverlayOnRgb(overlayOnRgb)
   }, [overlayOnRgb])
+
+  useEffect(() => {
+    viewerRef.current?.setPlacing(placing)
+  }, [placing])
+
+  useEffect(() => {
+    viewerRef.current?.setFriendlyMarkers(friendly)
+  }, [friendly])
 
   useEffect(() => {
     const v = viewerRef.current

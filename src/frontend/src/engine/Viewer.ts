@@ -44,8 +44,11 @@ export class Viewer {
   private boxGroup = new THREE.Group()
   private observerGroup = new THREE.Group()
   private threatGroup = new THREE.Group()
+  private friendlyGroup = new THREE.Group()
   private threatPickables: THREE.Mesh[] = []
   private pickCb: (box: BoundingBox | null, cursor?: SceneCursor) => void = () => {}
+  private placing = false
+  private placeCb: (e: number, n: number) => void = () => {}
   private pickThreatCb: (p: ThreatPosition | null, point?: { x: number; y: number }) => void = () => {}
   private cursorScreenCb: (screen: ScreenPoint) => void = () => {}
   private cursorAnchor?: WorldCoordinate
@@ -60,7 +63,7 @@ export class Viewer {
 
   constructor(private canvas: HTMLCanvasElement) {
     this.scene.background = new THREE.Color(0x080c10)
-    this.scene.add(this.boxGroup, this.observerGroup, this.threatGroup)
+    this.scene.add(this.boxGroup, this.observerGroup, this.threatGroup, this.friendlyGroup)
 
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' })
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2.5))
@@ -296,6 +299,44 @@ export class Viewer {
     this.cursorAnchor = world ?? undefined
     this.lastCursorScreen = undefined
     this.emitCursorScreen()
+  }
+
+  // ---- operator-placed friendly troops ----
+  setPlacing(on: boolean) {
+    this.placing = on
+    this.canvas.style.cursor = on ? 'crosshair' : 'default'
+  }
+
+  onPlaceFriendly(cb: (e: number, n: number) => void) {
+    this.placeCb = cb
+  }
+
+  /** Render the operator's troop positions (blue cones) from store state. */
+  setFriendlyMarkers(points: [number, number][]) {
+    this.clearGroup(this.friendlyGroup)
+    if (!this.meta) return
+    const groundY = -this.meta.span[2] / 2
+    for (const [E, N] of points) {
+      const [vx, , vz] = w2v([E, N, this.meta.origin[2]], this.meta.origin, this.meta.span)
+      const cone = new THREE.Mesh(new THREE.ConeGeometry(6, 16, 4), new THREE.MeshBasicMaterial({ color: 0x3b82f6 }))
+      cone.position.set(vx, groundY + 11, vz)
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(5, 8, 20),
+        new THREE.MeshBasicMaterial({ color: 0x3b82f6, transparent: true, opacity: 0.7, side: THREE.DoubleSide })
+      )
+      ring.rotation.x = -Math.PI / 2
+      ring.position.set(vx, groundY + 0.3, vz)
+      this.friendlyGroup.add(cone, ring)
+    }
+  }
+
+  private clearGroup(g: THREE.Group) {
+    for (const c of [...g.children]) {
+      g.remove(c)
+      ;(c as THREE.Mesh).geometry?.dispose?.()
+      const m = (c as THREE.Mesh).material as THREE.Material | undefined
+      m?.dispose?.()
+    }
   }
 
   dispose() {
@@ -574,6 +615,16 @@ export class Viewer {
       -((e.clientY - r.top) / r.height) * 2 + 1
     )
     this.raycaster.setFromCamera(ndc, this.camera)
+    // placing-troops mode: raycast the cloud surface → UTM → drop a friendly position
+    if (this.placing && this.points && this.meta) {
+      const hit = this.raycaster.intersectObject(this.points, false)[0]
+      if (hit) {
+        const E = hit.point.x + (this.meta.origin[0] + this.meta.span[0] / 2)
+        const N = (this.meta.origin[1] + this.meta.span[1] / 2) - hit.point.z
+        this.placeCb(E, N)
+      }
+      return
+    }
     // enemy markers take priority over boxes
     const th = this.raycaster.intersectObjects(this.threatPickables, false)[0]
     if (th) {

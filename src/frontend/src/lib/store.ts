@@ -21,6 +21,9 @@ interface AppState {
   selectedCursor: SceneCursor | null
   selectedThreat: ThreatPosition | null
   selectedThreatPoint: ScreenPoint | null
+  placing: boolean
+  friendly: [number, number][]
+  scanning: boolean
 
   setData: (d: { meta: CloudMeta; boxes: BoundingBox[]; viewshedInfo: ViewshedInfo | null; threatInfo: ThreatInfo | null; fieldsInfo: FieldsInfo | null }) => void
   setReady: (r: { viewshedReady: boolean; threatReady: boolean; fieldsReady: boolean }) => void
@@ -33,6 +36,10 @@ interface AppState {
   select: (selected: BoundingBox | null, selectedCursor?: SceneCursor | null) => void
   selectThreat: (selectedThreat: ThreatPosition | null, selectedThreatPoint?: ScreenPoint | null) => void
   setSelectedCursorScreen: (screen: ScreenPoint) => void
+  setPlacing: (placing: boolean) => void
+  addFriendly: (e: number, n: number) => void
+  clearFriendly: () => void
+  setScanning: (scanning: boolean) => void
 }
 
 const DEFAULT_CLASS_VISIBILITY: ClassVisibility = {
@@ -63,6 +70,9 @@ export const useStore = create<AppState>((set) => ({
   selectedCursor: null,
   selectedThreat: null,
   selectedThreatPoint: null,
+  placing: false,
+  friendly: [],
+  scanning: false,
 
   setData: (d) => set({ ...d, loading: false, error: null }),
   setReady: ({ viewshedReady, threatReady, fieldsReady }) => set({ viewshedReady, threatReady, fieldsReady }),
@@ -77,4 +87,8 @@ export const useStore = create<AppState>((set) => ({
   setSelectedCursorScreen: (screen) => set((s) => (
     s.selectedCursor ? { selectedCursor: { ...s.selectedCursor, screen } } : {}
   )),
+  setPlacing: (placing) => set({ placing }),
+  addFriendly: (e, n) => set((s) => ({ friendly: [...s.friendly, [e, n]] })),
+  clearFriendly: () => set({ friendly: [] }),
+  setScanning: (scanning) => set({ scanning }),
 }))

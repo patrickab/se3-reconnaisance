@@ -55,3 +55,14 @@ export const fetchViewshedAt = async (world: WorldCoordinate): Promise<ViewshedR
   if (!info) throw new Error('POST /api/viewshed missing x-viewshed-info')
   return { flags: new Uint8Array(await r.arrayBuffer()), info: JSON.parse(info) as ViewshedInfo }
 }
+
+// Re-template the enemy from operator-placed friendly positions. Heavy (~30-60 s).
+export const postRecompute = (friendly: [number, number][]): Promise<{ ok: boolean; avenue_source: string }> =>
+  fetch('/api/threat/recompute', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ friendly }),
+  }).then((r) => {
+    if (!r.ok) throw new Error(`recompute → ${r.status}`)
+    return r.json()
+  })

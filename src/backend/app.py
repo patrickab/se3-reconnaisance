@@ -239,3 +239,20 @@ def fields_info() -> Response:
     if not f.exists():
         return Response(status_code=404)
     return FileResponse(f, media_type="application/json")
+
+
+class RecomputeReq(BaseModel):
+    friendly: list[list[float]] = []  # operator-placed troop positions [[E, N], ...] in UTM
+
+
+@app.post("/api/threat/recompute")
+def recompute(req: RecomputeReq) -> dict:
+    """Re-template the enemy from operator-placed friendly positions, then re-project the
+    fires/observation fields. Heavy (~30-60 s): runs the full pipeline. Lazy import breaks
+    the app<->threat_template cycle."""
+    from src.backend import fields, threat_template  # noqa: PLC0415
+
+    friendly = [(float(p[0]), float(p[1])) for p in req.friendly] or None
+    threat = threat_template.run(friendly=friendly)
+    fields.run()
+    return {"ok": True, "n_friendly": len(req.friendly), "avenue_source": threat["avenue_source"]}

@@ -64,26 +64,19 @@ def load_friendly(data_dir: Path) -> list[tuple[float, float]] | None:
     return [(float(p[0]), float(p[1])) for p in json.loads(f.read_text())] or None
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description="Infer likely enemy positions (threat template)")
-    ap.add_argument("--side", default="west", choices=["west", "east", "north", "south"],
-                    help="edge our force approaches from")
-    ap.add_argument("--res", type=float, default=2.0, help="metres/cell (coarser = faster)")
-    ap.add_argument("--range", type=float, default=1000.0, dest="rng", help="enemy obs/weapon range m")
-    ap.add_argument("--k-obs", type=int, default=3, dest="k_obs", help="elevated observer/sniper positions")
-    ap.add_argument("--k-at", type=int, default=2, dest="k_at", help="ground anti-armor (tank/ATGM) positions")
-    ap.add_argument("--k-indirect", type=int, default=2, dest="k_indirect", help="indirect-fire (defilade) positions")
-    args = ap.parse_args()
-
-    t = build_dsm(DATA / "point_cloud.ply", args.res, DATA / "bounding_boxes.json")
+def run(side: str = "west", res: float = 2.0, rng: float = 1000.0,
+        k_obs: int = 3, k_at: int = 2, k_indirect: int = 2,
+        friendly: list[tuple[float, float]] | None = None) -> dict:
+    """Templating core — callable from the CLI and from the /api/threat/recompute endpoint."""
+    t = build_dsm(DATA / "point_cloud.ply", res, DATA / "bounding_boxes.json")
     dsm, transform, bounds, (h, w) = t["dsm"], t["transform"], t["bounds"], t["shape"]
     boxes = json.loads((DATA / "bounding_boxes.json").read_text())
 
     # ---- 1. accumulate viewsheds from the avenue of approach (reciprocity) ----
     # operator-placed friendly positions (ground truth) win; else auto-sample REAL terrain
-    friendly = load_friendly(DATA)
-    aa = friendly or avenue_points(args.side, t["valid"], transform)
-    aa_source = "operator (friendly.json)" if friendly else f"auto-{args.side}"
+    friendly = friendly or load_friendly(DATA)
+    aa = friendly or avenue_points(side, t["valid"], transform)
+    aa_source = "operator" if friendly else f"auto-{side}"
     aa_cx = float(np.mean([p[0] for p in aa]))               # AA centroid: shooters orient on it
     aa_cy = float(np.mean([p[1] for p in aa]))
     acc = np.zeros((h, w), dtype=np.float32)
@@ -93,8 +86,8 @@ def main() -> None:
         if not (0 <= row < h and 0 <= col < w):
             continue
         ground = float(dsm[row, col])
-        vis, _, _ = viewshed(dsm, transform, args.res, (ax, ay), obs_z=ground,
-                             eye_h=1.7, target_h=1.7, max_range=args.rng, arc_deg=360)
+        vis, _, _ = viewshed(dsm, transform, res, (ax, ay), obs_z=ground,
+                             eye_h=1.7, target_h=1.7, max_range=rng, arc_deg=360)
         acc += vis
     observation = acc / max(1, len(aa))                      # 0..1: fraction of approach a cell sees
 
@@ -103,7 +96,7 @@ def main() -> None:
     from rasterio.features import rasterize
     cover = rasterize([(box_polygon(b), 1) for b in boxes], out_shape=(h, w),
                       transform=transform, fill=0, dtype="uint8").astype(bool)
-    cover_dist = distance_transform_edt(~cover) * args.res   # metres to nearest cover
+    cover_dist = distance_transform_edt(~cover) * res   # metres to nearest cover
     survivability = np.clip(1.0 - cover_dist / 15.0, 0.2, 1.0)
 
     # ---- 3. thermal cue: hot objects (occupied/active) raise nearby likelihood ----
@@ -123,11 +116,11 @@ def main() -> None:
     score = direct                                           # heatmap drape = direct-fire dominance
 
     # ---- 5. INDIRECT-fire suitability: DEFILADE (hidden from our approach, in range) ----
-    ground_lvl = minimum_filter(dsm, size=int(25 / args.res) | 1)
+    ground_lvl = minimum_filter(dsm, size=int(25 / res) | 1)
     hag = dsm - ground_lvl                                    # height above local ground
-    gx, gy = np.gradient(ground_lvl, args.res, args.res)
+    gx, gy = np.gradient(ground_lvl, res, res)
     slope = np.degrees(np.arctan(np.hypot(gx, gy)))
-    dist_to_overwatch = distance_transform_edt(~(observation > 0.5)) * args.res
+    dist_to_overwatch = distance_transform_edt(~(observation > 0.5)) * res
     behind_mask = (observation < 0.05) & (dist_to_overwatch > 8) & (dist_to_overwatch < 90)
     emplaceable = (slope < 12) & (~cover) & t["valid"]
     indirect = (behind_mask & emplaceable).astype(np.float32) * (1.0 - dist_to_overwatch / 90.0)
@@ -140,9 +133,9 @@ def main() -> None:
 
     def extract(smap: np.ndarray, k: int, role: str, atype: str, indirect: bool = False) -> list[dict]:
         out: list[dict] = []
-        peaks = (smap == maximum_filter(smap, size=int(35 / args.res) | 1)) & (smap > 0.28)
+        peaks = (smap == maximum_filter(smap, size=int(35 / res) | 1)) & (smap > 0.28)
         pr, pc = np.where(peaks)
-        sep2 = (70.0 / args.res) ** 2
+        sep2 = (70.0 / res) ** 2
         for i in np.argsort(-smap[pr, pc]):
             if len(out) >= k:
                 break
@@ -175,9 +168,9 @@ def main() -> None:
                              transform=transform, fill=0, dtype="uint8").astype(bool)
                    if buildings else np.zeros((h, w), bool))
     ground = (~on_building) & (hag < 3)                      # low, on the deck (not canopy/roof)
-    positions = (extract(np.where(on_building, direct, 0), args.k_obs, "observer", "sniper_op")
-                 + extract(np.where(ground, direct, 0), args.k_at, "anti_armor", "tank")
-                 + extract(indirect, args.k_indirect, "indirect", "mortar", indirect=True))
+    positions = (extract(np.where(on_building, direct, 0), k_obs, "observer", "sniper_op")
+                 + extract(np.where(ground, direct, 0), k_at, "anti_armor", "tank")
+                 + extract(indirect, k_indirect, "indirect", "mortar", indirect=True))
     for i, p in enumerate(positions):
         p["id"] = f"red_{i}"
 
@@ -199,20 +192,34 @@ def main() -> None:
 
     # positions carry world (UTM) coords; the viewer maps them with w2v()
     # `avenue` = where we templated OUR approach from — the input that drives enemy facing.
-    info = {"side": args.side, "aa_points": len(aa), "range_m": args.rng,
+    info = {"side": side, "aa_points": len(aa), "range_m": rng,
             "avenue_source": aa_source,
             "avenue": [[round(x, 1), round(y, 1)] for x, y in aa],
             "avenue_centroid": [round(aa_cx, 1), round(aa_cy, 1)],
             "positions": positions}
     (BUILD / "threat.json").write_text(json.dumps(info))
 
-    print(f"AA: {len(aa)} approach points from the {args.side}; {len(positions)} enemy positions surfaced")
+    print(f"AA: {len(aa)} approach points from the {side}; {len(positions)} enemy positions surfaced")
     for p in positions:
         extra = (f"sees {p['sees_pct_of_approach']:.0f}% of approach" if p["role"] != "indirect"
                  else f"defilade {p['defilade_m']}m behind overwatch")
         print(f"  {p['id']:7} {p['type']:9} [{p['role']:10}] score {p['score']:.2f}  {extra}  "
               f"thermal {p['thermal_cue']}  @ {p['world'][0]:.0f}E {p['world'][1]:.0f}N")
     print(f"wrote {BUILD/'threat_likelihood.tif'} + threat.bin + threat.json")
+    return info
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description="Infer likely enemy positions (threat template)")
+    ap.add_argument("--side", default="west", choices=["west", "east", "north", "south"],
+                    help="edge our force approaches from")
+    ap.add_argument("--res", type=float, default=2.0, help="metres/cell (coarser = faster)")
+    ap.add_argument("--range", type=float, default=1000.0, dest="rng", help="enemy obs/weapon range m")
+    ap.add_argument("--k-obs", type=int, default=3, dest="k_obs", help="elevated observer/sniper positions")
+    ap.add_argument("--k-at", type=int, default=2, dest="k_at", help="ground anti-armor positions")
+    ap.add_argument("--k-indirect", type=int, default=2, dest="k_indirect", help="indirect-fire (defilade) positions")
+    a = ap.parse_args()
+    run(a.side, a.res, a.rng, a.k_obs, a.k_at, a.k_indirect)
 
 
 if __name__ == "__main__":

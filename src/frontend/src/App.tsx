@@ -4,6 +4,7 @@ import Hud from './components/Hud'
 import ObjectPopup from './components/ObjectPopup'
 import ThreatPanel from './components/ThreatPanel'
 import ThreatPopup from './components/ThreatPopup'
+import FriendlyPanel from './components/FriendlyPanel'
 
 export default function App() {
   const error = useStore((s) => s.error)
@@ -17,6 +18,7 @@ export default function App() {
       <main id="scene-viewer" className="relative min-w-0 flex-1" aria-label="3D tactical scene" tabIndex={-1}>
         <SceneCanvas />
         <Hud />
+        <FriendlyPanel />
         <ObjectPopup />
         <ThreatPanel />
         <ThreatPopup />

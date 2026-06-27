@@ -57,13 +57,9 @@ def p_hit(dist: np.ndarray, eff: float, mx: float) -> np.ndarray:
     return np.clip(np.where(dist <= mx, p, 0.0), 0.0, 1.0)
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description="Project the enemy laydown into threat fields")
-    ap.add_argument("--side", default="west", choices=["west", "east", "north", "south"])
-    ap.add_argument("--res", type=float, default=2.0)
-    args = ap.parse_args()
-
-    t = build_dsm(DATA / "point_cloud.ply", args.res, DATA / "bounding_boxes.json")
+def run(side: str = "west", res: float = 2.0) -> dict:
+    """Project the enemy laydown into threat fields — callable from CLI and /recompute."""
+    t = build_dsm(DATA / "point_cloud.ply", res, DATA / "bounding_boxes.json")
     dsm, transform, bounds, (h, w) = t["dsm"], t["transform"], t["bounds"], t["shape"]
     threat = json.loads((BUILD / "threat.json").read_text())
     enemies = threat["positions"]
@@ -88,7 +84,7 @@ def main() -> None:
         dist = np.hypot(gx - E, gy - N)
         pr = p_hit(dist, prof["eff"], prof["mx"])
         for k, th in TARGETS.items():
-            vis, _, _ = viewshed(dsm, transform, args.res, (E, N), obs_z=U,
+            vis, _, _ = viewshed(dsm, transform, res, (E, N), obs_z=U,
                                  eye_h=prof["eye_h"], target_h=th, max_range=prof["mx"],
                                  facing_deg=float(facing), arc_deg=prof["arc"])
             depth[k] += vis                                       # +1 per shooter that sees it
@@ -100,7 +96,7 @@ def main() -> None:
     box_mask = rasterize([(box_polygon(b), 1) for b in json.loads((DATA / "bounding_boxes.json").read_text())],
                          out_shape=(h, w), transform=transform, fill=0, dtype="uint8").astype(bool)
     passable = (~box_mask) & t["valid"]
-    clearance = distance_transform_edt(passable) * args.res       # corridor half-width (m)
+    clearance = distance_transform_edt(passable) * res       # corridor half-width (m)
     ridge = (clearance == maximum_filter(clearance, size=3)) & passable   # medial axis
     choke = ridge & (clearance > 1.5) & (clearance < 7)           # narrow passages on the route net
     trp = np.zeros((h, w), bool)
@@ -108,7 +104,7 @@ def main() -> None:
     chosen, trps = [], []
     for i in np.argsort(clearance[cr, cc]):                       # narrowest first
         r, c = int(cr[i]), int(cc[i])
-        if any((r - sr) ** 2 + (c - sc) ** 2 < (60 / args.res) ** 2 for sr, sc in chosen):
+        if any((r - sr) ** 2 + (c - sc) ** 2 < (60 / res) ** 2 for sr, sc in chosen):
             continue
         chosen.append((r, c))
         trps.append([round(transform.c + (c + 0.5) * transform.a, 1),
@@ -128,7 +124,7 @@ def main() -> None:
     indirect = in_range.astype(np.float32) * np.clip(0.6 * observed + 0.7 * trp, 0.0, 0.9)
 
     # ---- cover (boxes stop rounds) reduces risk; combine to a continuous cost ----
-    cover_near = np.clip(1.0 - distance_transform_edt(~box_mask) * args.res / 8.0, 0.0, 1.0)
+    cover_near = np.clip(1.0 - distance_transform_edt(~box_mask) * res / 8.0, 0.0, 1.0)
     for k in TARGETS:
         d = direct[k]
         emphasis = 1.0 + 0.35 * np.clip(depth[k] - 1, 0, None)    # kill zones (overlap) hurt more
@@ -158,7 +154,7 @@ def main() -> None:
     (BUILD / "depth.bin").write_bytes(depth_b.tobytes())
 
     info = {
-        "side": args.side,
+        "side": side,
         "n_direct_shooters": n_direct,
         "max_engagement_depth": int(depth["dismount"].max()),
         "trps": trps,
@@ -171,6 +167,15 @@ def main() -> None:
     print(f"{n_direct} direct shooters projected | max engagement depth {info['max_engagement_depth']} "
           f"| {info['pct_in_kill_zone']}% of ground in a >=2 kill zone | {len(trps)} TRPs on chokepoints")
     print(f"wrote build/fields_cost_*.tif + fields_depth.tif + danger.bin + depth.bin + fields.json")
+    return info
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description="Project the enemy laydown into threat fields")
+    ap.add_argument("--side", default="west", choices=["west", "east", "north", "south"])
+    ap.add_argument("--res", type=float, default=2.0)
+    a = ap.parse_args()
+    run(a.side, a.res)
 
 
 if __name__ == "__main__":
