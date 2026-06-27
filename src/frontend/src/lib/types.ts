@@ -127,7 +127,7 @@ export interface FieldsInfo {
 }
 
 export type ColorMode = 'rgb' | 'height' | 'temperature' | 'viewshed' | 'threat' | 'danger' | 'depth'
-export type LayerKey = 'points' | 'boxes' | 'observer' | 'threats'
+export type LayerKey = 'points' | 'boxes' | 'observer' | 'threats' | 'viewcones'
 export type Layers = Record<LayerKey, boolean>
 export type ClassVisibility = Record<BoxClass, boolean>
 export interface ScreenPoint {

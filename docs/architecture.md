@@ -1,108 +1,136 @@
 # Architecture
 
 Tactical-reasoning layer on top of SE3 Labs' georeferenced 3D battlefield
-reconstruction (EDTH Munich challenge). Turns labeled geometry into operator
-judgments — *where is the enemy likely to approach, where do I have field of
-fire, where am I exposed* — fast and legible.
+reconstruction (EDTH Munich challenge). The system turns geometry into operator
+judgments: where the enemy can observe, where friendly movement is exposed, what
+ground is dead, and what decision points matter under time pressure.
 
-## One-line system
+## One-Line System
 
-Provided 3D data → Python ingest/processing → packed web assets → interactive
-three.js viewer. The tactical layer is now being built on top: the **viewshed
-engine (Slice 1) is done**; threat maps + routes come next.
+Provided 3D data -> FastAPI backend packs the point cloud and serves API data ->
+React/Vite tactical viewer renders a three.js scene -> operator places the enemy
+(enemy laydown is operator ground truth, not auto-templated) -> backend projects
+fires/observation fields and serves per-point overlays for the viewer.
 
 ## Components
 
 | Component | What it is | State |
 |-----------|------------|-------|
-| **Data** (`data/`) | Provided inputs, gitignored: point cloud + object boxes | given |
-| **Backend** (`src/backend/`) | Python IO, raster/web prep scripts | built |
-| **Frontend** (`src/frontend/`) | Static three.js 3D viewer, no build step | built |
-| **Tactical layer** (`src/backend/`) | `terrain.py` + `visibility.py` (viewshed) | **Slice 1 built** |
-| **Tactical layer** (`src/backend/`) | `fields.py` (threat maps) → `routes.py` | planned |
+| **Data** (`data/`) | Provided point cloud and object boxes, gitignored | given |
+| **Backend API** (`src/backend/app.py`) | FastAPI app that packs the cloud on startup, serves `api/*`, holds an in-memory unit-contact store | built |
+| **Tactical layer** (`terrain.py`, `visibility.py`, `units.py`, `threat_template.py`, `fields.py`) | DSM + box occluders, radial LOS viewshed, doctrinal unit catalog, operator laydown, fires/observation projection | built |
+| **Frontend** (`src/frontend/`) | React 18 + Vite + Tailwind UI; imperative three.js engine; unit placement, threat/danger/depth overlays | built |
+| **Generated analysis** (`build/`) | `dsm.tif`, `viewshed.{tif,bin,json}`, `threat.{json,bin}`, `danger.bin`, `depth.bin`, `fields_cost_{dismount,mount}.tif`, `fields_depth.tif`, `fields.json` | generated, gitignored |
 
-## Data (the foundation)
+## Data Foundation
 
-Two files, same **UTM frame** (metres) — register directly, no alignment.
+Two inputs share the same UTM metre frame and register directly, with no
+alignment step.
 
-- **`point_cloud.ply`** — binary LE, single `vertex`, **3,986,862 points**.
-  `double x,y,z` (UTM: x=easting, y=northing, z=elevation ASL) + `uchar
-  red,green,blue` (real photo texture, *not* class codes). No labels, no
-  normals. Scene ≈ **1264 × 775 m**, relief **32 m**, density ≈ **4 pts/m²**
-  (top-down → 2.5D surface, not volumetric). Military training area.
-- **`bounding_boxes.json`** — **58 oriented 3D boxes**, man-made objects only
-  (shelter 19 · house 15 · container 16 · wall 7 · car 1). Each: `center`
-  [E,N,U], `extent` [L,W,H], `rotation` yaw quaternion, `avg_temperature` °C
-  (9.8–25.4; warm ⇒ possibly occupied). These are the sightline occluders /
-  hard cover Track 1 needs — ray-test 58 boxes, not 4M points.
+- **`point_cloud.ply`**: binary little-endian PLY, single `vertex`, about
+  **3,986,862 points**. Each point has `double x,y,z` in UTM/elevation plus
+  `uchar red,green,blue` from photo texture, not class labels. Scene span is
+  about **1264 x 775 m**, relief about **32 m**, density about **4 pts/m2**.
+  This supports 2.5D surface reasoning, not volumetric interior reasoning.
+- **`bounding_boxes.json`**: **58 oriented 3D boxes** for man-made objects only:
+  shelter 19, house 15, container 16, wall 7, car 1. Each box has `center`,
+  `extent`, yaw quaternion in `rotation`, and `avg_temperature`. Boxes are hard
+  cover / LOS occluders; thermal values can cue possible occupancy.
 
-## Data flow
+## Runtime Data Flow
 
-```
-data/point_cloud.ply ──► io.read_ply (memmap, zero-copy numpy struct array)
-       │                        │
-       │                        ├─► inspect_ply.py    → header + stats (sanity)
-       │                        ├─► render_rasters.py → ortho/DSM/HAG PNGs (gitignored)
-       │                        └─► prepare_web.py    → voxel-downsample, recenter
-       │                                                  to local origin, pack binary
-       ▼                                                  │
-data/bounding_boxes.json ──────────────────────────────► │
-                                                          ▼
-                              src/frontend/public/  (cloud.bin, meta.json, bounding_boxes.json)
-                                                          │
-                                                          ▼
-                              index.html (three.js via CDN) — interactive viewer
-```
+```text
+data/point_cloud.ply
+  -> io.read_ply() zero-copy memmap
+  -> app.pack_cloud() voxel-downsample + recenter + sub-voxel horizontal jitter + RAM
+  -> /api/meta + /api/cloud
 
-**Coordinate handling:** UTM doubles exceed float32 precision, so
-`prepare_web.py` recenters to a local origin (`meta.json`); the browser works
-in metres from that origin. Frame mapping in viewer: **east → X, elevation →
-Y (up), north → −Z**. True 1:1 scale, no vertical exaggeration.
+data/bounding_boxes.json
+  -> /api/boxes
 
-## Tactical layer
+terrain pass (cached by res_m):
+  point cloud + boxes
+    -> terrain.build_dsm() -> build/dsm.tif (max-height grid + box occluders)
+    -> visibility.py -> build/viewshed.{tif,bin,json}
+    -> /api/viewshed(+info)  |  POST /api/viewshed recomputes at a cursor
 
-Spine = **one primitive, the viewshed**, because *observation gates
-lethality*: direct fire = a weapon sees you & in range; indirect fire = any
-observer sees you, in range, kill-chain closes. Build order (all share the
-visibility primitive):
+operator session (per-session, cleared on reset/restart):
+  operator places units (POST /api/units, hostile + friendly)
+    -> /api/units (list, side-filtered) + /api/unit-profiles (catalog)
+    -> POST /api/threat/recompute
+         -> threat_template.from_manual() -> build/threat.json (laydown)
+         -> fields.run() -> build/{danger,depth}.bin + fields_cost_*.tif + fields.json
+    -> /api/threat-info · /api/threat · /api/danger · /api/depth · /api/fields-info
+    -> POST /api/threat/reset wipes the laydown + projected artifacts
 
-```
-terrain.py    DSM from cloud + 58 boxes stamped as occluders   [BUILT, Slice 1]
-   ↓          (vegetation mask for concealment still to add)
-visibility.py viewshed / LOS on the DSM (eye/target ht, range, [BUILT, Slice 1]
-   ↓          arc, facing)   ← core primitive
-fields.py     O (combined observation), D (direct-fire), I (indirect),  [planned]
-   ↓          cover C, concealment K, traversability T → composite risk
-routes.py     least-cost approach (A*/Dijkstra on cost raster)          [planned]
-              → covered axis, bounds, chokepoints, dead ground, HVT, go/no-go
+browser:
+  React app -> Zustand store -> SceneCanvas -> Viewer.ts three.js engine
+  Panels (FriendlyPanel, ThreatPanel) + popups (Object/Threat/PlacedUnit via InfoPanelPopup)
+  Color modes: rgb · height · temperature · viewshed · threat · danger · depth
 ```
 
-### Viewshed engine (Slice 1, built)
+## Coordinate Handling
 
-- **`terrain.py`** → `build_dsm()`: max-height grid (default 1 m) from the cloud,
-  with the 58 oriented boxes rasterized in as solid occluders (so walls/buildings
-  block line of sight even where the cloud is sparse); gaps nearest-filled. Saved
-  as a georeferenced **GeoTIFF** (`build/dsm.tif`, UTM).
-- **`visibility.py`** → `viewshed()`: radial sweep from an observer; per ray it
-  tracks the running-max terrain elevation angle and marks a cell visible when a
-  standing target there clears everything closer. Parameters: eye height, target
-  height, max range, arc, facing. Outputs `build/viewshed.tif` + a per-web-point
-  `viewshed.bin`/`.json` overlay the viewer drapes (red = seen, green = dead
-  ground), with the observer marker + range ring. Observer auto-placed at a
-  realistic roof **edge** (not the centre of a large flat roof, which self-occludes).
-- Inputs/outputs are georeferenced UTM (GeoTIFF) — reusable in QGIS / SE3's stack
-  — plus a compact binary derived for the browser.
+UTM doubles exceed float32 precision in the browser. The backend stores served
+positions relative to the local minimum corner in `pack_cloud()` and exposes the
+origin/span through `/api/meta`. The viewer maps world coordinates through
+`w2v(E,N,U)`: east -> X, elevation -> Y/up, north -> -Z, then recenters by scene
+span. Scale is true 1:1 with no vertical exaggeration.
 
-Red laydown (`data/enemy_assets.json`, proposed) places a realistic Russian
-threat model into the zone; Blue maneuver analysis computes the friendly
-course of action against it. See `docs/THREAT_LIBRARY.md` (Red) and
-`docs/MANEUVER_ANALYSIS.md` (Blue).
+Cloud serving resolution is controlled by `src/config.json`:
+`cloud.voxel_m = 0.1` and `cloud.max_points = 3900000` by default. To break the
+DSM lattice moiré, served points get sub-voxel horizontal jitter (z untouched).
 
-## Honest limits (stated to the jury)
+## Tactical Layer
 
-- ~4 pts/m² top-down → **surface-accurate multi-level visibility** (real
-  roofs/walls/canopy beat a flat heightmap), *not* see-through walls.
-- Engagement envelopes are **doctrinal models**, not ballistics.
-- Red positions **templated/suspected** unless thermally cued; confidence
-  labeled, never a guess shown as confirmed contact.
-- One temporal pass → **no change detection** (Track 2 blocked).
+The spine is **viewshed**, because observation gates lethality. The chain is now:
+
+```text
+terrain.py        DSM from cloud + 58 boxes stamped as solid occluders   [built]
+visibility.py     radial LOS viewshed; range, arc, facing, eye/target h  [built]
+units.py          doctrinal unit catalog (single source of truth)        [built]
+threat_template   operator-placed enemies -> build/threat.json laydown   [built]
+fields.py         fires/observation projection -> danger, depth, TRPs   [built]
+routes.py         least-cost approach, covered axis, GO/NO-GO            [planned]
+landcover.py      vegetation/concealment mask (separate from hard cover) [planned]
+```
+
+**`units.py`** is the single source of truth for per-type properties (range,
+arc, role, fire kind). The `UNIT_CATALOG` is read by both the analysis chain
+(`threat_template`, `fields`) and the frontend (`GET /api/unit-profiles`); no
+side keeps a duplicate copy.
+
+**`threat_template.py`** does *not* auto-template enemy positions — the operator
+marks where the enemy actually is (`POST /api/units` with `side: hostile`), then
+`POST /api/threat/recompute` turns those marks into a structured laydown that
+`fields.py` projects. Direct-fire shooters are oriented onto friendly positions
+(or the scene centre if none given); indirect units have no sector of fire.
+
+**`fields.py`** design choices: continuous cost (not a red/green mask — the route
+planner needs a gradient); engagement-area depth as a *count* of overlapping
+shooters (>=2 = mutually-supporting kill zone); two target heights (dismount 1.7
+m, mount 2.5 m); range-graduated lethality (`p_hit` decays past effective range,
+fades to ~0.2 at max, 0 beyond); per-asset sector of fire; indirect fire =
+mortar range AND (observed OR pre-registered TRPs on terrain-forced chokepoints,
+detected via clearance medial-axis on the passable mask).
+
+`visibility.py` / `fields.py` write georeferenced outputs for GIS reuse **and**
+browser-specific per-point overlays aligned to the exact packed cloud served by
+FastAPI. In the viewer: viewshed paints seen/dead; threat mode shows the laydown;
+danger mode paints continuous risk; depth mode shows kill-zone overlap.
+
+## Honest Limits
+
+- Point cloud density and top-down capture enable surface-accurate 2.5D
+  visibility over roofs, walls, canopy, and terrain, not see-through-wall or
+  building-interior inference.
+- The DSM treats tree canopy as a solid occluder, so dead ground behind
+  vegetation is really *concealment* (hides you, doesn't stop a round). Until
+  `landcover.py` exists this is tagged lower-confidence, not fully safe.
+- Engagement envelopes are doctrinal models, not ballistic simulation.
+- Red positions come from operator placement, not detection; `fields.py`
+  projects what is marked, it does not discover the enemy. Confidence must be
+  labeled rather than implied.
+- The unit-contact store is in-memory and resets on server restart; the laydown
+  is per-session and cleared by `/api/threat/reset` or on lifespan startup.
+- With one temporal pass there is no change detection or live movement tracking.

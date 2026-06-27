@@ -1,47 +1,51 @@
 # Current Focus
 
-## Where we are
+## Where We Are
 
-Foundation + concept done, and the **core tactical primitive (viewshed) is built**
-(Slice 1). Next is multiplying it into threat maps and routes.
+Foundation, concept docs, the FastAPI-backed viewer, the viewshed primitive, and
+the full enemy-laydown → fires/observation projection pipeline are in place.
 
-- [x] Data ingest + inspection (`io.py`, `inspect_ply.py`, `render_rasters.py`).
-- [x] Web 3D viewer: point cloud (RGB / height) + 58 semantic boxes (class /
-      thermal), click-to-inspect, true 1:1 scale.
-- [x] Tactical concept written: `THREAT_LIBRARY.md` (Red) +
-      `MANEUVER_ANALYSIS.md` (Blue) — placing a Russian threat laydown and
-      computing the friendly course of action.
-- [x] **Slice 1 — viewshed engine.** `terrain.py` (DSM + 58 box occluders →
-      `build/dsm.tif`) and `visibility.py` (radial line-of-sight → `build/
-      viewshed.tif` + per-point overlay). Viewer has a **viewshed mode**
-      (red = seen / green = dead ground), observer marker + range ring.
+- [x] Data ingest and inspection: `io.py`, `inspect_ply.py`.
+- [x] FastAPI backend: packs the cloud on startup, serves `/api/{meta,cloud,boxes}`, optional viewshed endpoints, and the unit/threat/fields endpoints.
+- [x] React/Vite tactical viewer: point cloud, semantic boxes, rgb/height/temperature/viewshed/threat/danger/depth color modes, layer toggles, selected-object inspection, keyboard navigation, true 1:1 scale, plus operator unit placement and analyzed-laydown overlays.
+- [x] Tactical concept docs: `THREAT_LIBRARY.md` for Red/OPFOR assets and `MANEUVER_ANALYSIS.md` for Blue maneuver outputs.
+- [x] Slice 1 viewshed: `terrain.py` builds the DSM and stamps 58 box occluders; `visibility.py` computes radial LOS and writes `build/viewshed.*` for GIS and viewer overlay use.
+- [x] **Doctrinal unit catalog** (`units.py`): single source of truth for tank/ifv/apc/assault/sniper/mortar (range, arc, role, fire kind, height AGL); served to the frontend via `GET /api/unit-profiles`.
+- [x] **Operator-placed enemy laydown** (`threat_template.py`): operator marks where the enemy is; `POST /api/threat/recompute` turns marks into `build/threat.json`. No auto-templating.
+- [x] **Fires/observation projection** (`fields.py`): range-graduated `p_hit`, per-asset sectors, engagement-area depth (kill zones at >=2 overlap), terrain-forced chokepoint TRPs, indirect = mortar range AND (observed OR TRP), cover reduction. Outputs `build/{danger,depth}.bin` + `fields_cost_*.tif` + `fields_depth.tif` + `fields.json`.
+- [x] Interactive viewshed at cursor: `POST /api/viewshed` recomputes LOS at a clicked point (per-frame cursor projection in the viewer).
 
-## Next (in order)
+## Active Work
 
-1. **`terrain.py` — vegetation mask** (concealment) to complement box cover.
-   (DSM + occluders already done in Slice 1.)
-2. **`data/enemy_assets.json`** — finalize schema (proposed in
-   `THREAT_LIBRARY.md`), place Red assets in the viewer.
-3. **Slice 2 — FastAPI** endpoint so the viewer can "drop a pin" and recompute a
-   viewshed live (interactive enemy-perspective).
-4. **`fields.py`** — threat maps: combined observation `O` (union of viewsheds),
-   direct-fire `D`, indirect `I`; cover/concealment/traversability.
-5. **`routes.py`** — approach-route cost surface → covered axis, bounds,
-   chokepoints, dead ground.
-6. Suppression priority (HVT) + go/no-go callout in MGRS, < 10 s.
+- The UI/UX refit toward a tactical C2 design philosophy continues (glance-first,
+  honest uncertainty, semantic color, redundant shape/text encoding, spatial
+  constancy, visible degraded/missing-data states, no hover-only critical
+  controls). Recent additions: `FriendlyPanel` for unit placement + Analyze/Reset,
+  `ThreatPanel` ranked enemy list, anchor-following `InfoPanelPopup` consumed by
+  Object/Threat/PlacedUnit popups.
+- Threat/fields overlays are per-session: the battlefield opens blank (terrain +
+  object boxes only) and the operator places the enemy, then runs Analyze. `POST
+  /api/threat/reset` and lifespan startup both wipe the laydown + projected
+  artifacts via `clear_laydown()`.
 
-## Open questions (gate everything — for the mentor)
+## Next In Order
 
-- **Is there a second temporal pass?** Without it Track 2 (change detection)
-  is dead and Track 1 is the only bet.
-- **What does a "good" < 10 s output look like to the sponsor/operators?**
-  Drives the composite-risk weights (`w_o, w_d, w_i, w_c, w_k`) and what
-  counts as "significant."
+1. **Tactical C2 UI pass**: keep strengthening system-status and data-boundary treatment; ensure danger/depth color modes read clearly and degraded states (no laydown yet) are explicit.
+2. **`landcover.py` vegetation mask**: derive concealment separately from hard cover so dead ground behind canopy is correctly tagged lower-confidence rather than treated as solid occlusion.
+3. **`data/enemy_assets.json`**: finalize schema from `THREAT_LIBRARY.md` if a non-operator-templated fallback is still wanted (current flow is operator-placed only).
+4. **`routes.py`**: least-cost approach, covered axis, bounds, chokepoints, dead ground, suppression priority, GO/NO-GO output — consumes the continuous cost surface from `fields.py`.
+5. **Persistence of the unit-contact store**: currently in-memory and resets on server restart; decide whether session persistence or a snapshot is needed.
+
+## Open Questions
+
+- Is there a second temporal pass? Without it, Track 2 change detection remains blocked.
+- What exactly counts as a sponsor/operator-good output in under 10 seconds? This gates risk weights and what the UI should escalate.
+- What confidence vocabulary should be standardized across operator-placed Red positions, thermal cues, stale viewshed/fields products, and missing sensors?
+- Should the indirect-fire model grow beyond mortar range ∩ (observed ∪ TRP) — e.g. time-of-flight, ammo resupply, or counter-battery risk?
 
 ## Notes
 
-- Single-pass bonus available now: **thermal cueing** — flag warm structures
-  (occupied / recently active) from `avg_temperature` to raise their
-  likelihood of hosting a Red OP/weapon.
-- Untracked stray file in repo root: `._point_cloud.ply` (macOS AppleDouble
-  artifact, not real data — candidate for deletion).
+- Single-pass thermal cueing remains valuable: warm structures from `avg_temperature` can raise suspected OP/weapon likelihood without claiming confirmation.
+- Generated `build/` layers are absent until scripts/endpoints run; the UI must represent this as unavailable/degraded data, not as an empty or silently disabled state.
+- `fields.py` recomputes the DSM internally via `build_dsm()`; `app.py` caches terrain by `res_m` in `TERRAIN` but `fields.run()` does not yet reuse that cache.
+- `src/frontend/.vite/` appeared in the latest repomix output but is generated cache and should be ignored architecturally. A stale `docs/repo-context.md` is also present; `.docs/repo-context.md` is the current generated dump.

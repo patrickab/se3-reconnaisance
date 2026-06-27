@@ -2,55 +2,81 @@
 
 ## Stack
 
-- **Python ≥ 3.12**, managed by **uv** (`uv sync`, `uv run python …`).
-  Build backend: **hatchling**; package = `src`.
-- Deps: `numpy>=2.0`, `matplotlib>=3.8`, `pillow>=10.0`, plus the geo stack for
-  the tactical layer — `rasterio>=1.4` (GeoTIFF), `shapely>=2.0` (footprints),
-  `scipy>=1.13` (gap-fill).
-- **Frontend:** vanilla static HTML + **three.js@0.160** via CDN importmap.
-  No bundler, no npm, no build step. Browser needs internet on first load.
+- **Python >= 3.12**, managed by **uv**. Package root is `src`; build backend is hatchling.
+- Backend dependencies: `numpy`, `fastapi`, `uvicorn[standard]`, `rasterio`, `shapely`, `scipy`, `pydantic`.
+- **Backend:** FastAPI in `src/backend/app.py`; tactical analysis modules (`terrain`, `visibility`, `units`, `threat_template`, `fields`) in `src/backend/`.
+- **Frontend:** React 18 + TypeScript + Vite + TailwindCSS + three.js + Zustand under `src/frontend/`.
+- Shared runtime config is `src/config.json`: backend host/port, frontend port, and cloud voxel/max-point settings.
 
-## Lint / format — ruff (the only tool)
+## Python Style
 
-- `line-length = 135`, `target-version = py312`, formatter = Black-compatible.
-- Lint select: `E F I B C4 TCH SIM ANN ARG RUF`. Ignored: `RUF100`, `B904`.
-- `respect-gitignore = true`. isort: force-sort within sections, order
-  stdlib → third-party → first-party → local.
-- Type hints expected (`ANN`). Scripts use `# noqa: E402` for imports placed
-  after the `sys.path`/ROOT bootstrap.
+- Ruff is the configured formatter/linter: line length 135, target `py312`, Black-compatible format.
+- Ruff lint select: `E F I B C4 TCH SIM ANN ARG RUF`; ignored: `RUF100`, `B904`.
+- isort order: future, standard-library, third-party, first-party, local-folder; force-sort within sections.
+- Type hints are expected. Scripts use module docstrings with usage examples, `argparse`, and a `main()` entrypoint.
+- Data-heavy code is numpy-first and favors vectorized operations, memmaps, deterministic sampling (`np.random.default_rng(seed)`), and avoiding unnecessary copies.
+- Cross-module imports inside the backend use `sys.path.insert(0, ROOT)` + `from src.backend.x import ...` (see `fields.py`, `threat_template.py`).
+- Comments should be terse and explain why, especially around coordinate precision, geospatial transforms, and LOS/threat assumptions.
 
-## Code style (observed)
+## Frontend Style
 
-- Scripts resolve repo root via `ROOT = Path(__file__).resolve().parents[3]`,
-  then import `from src.backend.io import read_ply`.
-- Each script: module docstring with a `uv run …` usage line, a `main()`,
-  `argparse` for options.
-- numpy-first, vectorized; zero-copy / memmap where the data is large.
-- Comments are terse and explain *why* (e.g. why recenter to a local origin).
+- TypeScript is strict: `strict`, `noUnusedLocals`, `noUnusedParameters`, and `noFallthroughCasesInSwitch` are enabled.
+- React owns UI state and layout; `Viewer.ts` owns the three.js scene graph imperatively. Do not let React mutate three.js objects directly.
+- Use Zustand store state/actions for viewer metadata, boxes, viewshed/threat/fields readiness, units list, unit profiles, layers, color mode, overlay-on-rgb, selection, placing/removing modes, active side/unit type, loading, and error state.
+- Tailwind is the styling system. Tactical color tokens live in `tailwind.config.js`; reusable component utilities (`.panel`, `.hud-text`, `.eyebrow`, `.skeleton-bar`, `.skip-link`) are in `src/index.css`.
+- Frontend API calls should use relative `/api/...` URLs so Vite proxy works in dev and same-origin works in production.
+- Static Tailwind class strings only — the JIT cannot see interpolated class names (see `FriendlyPanel.tsx`'s `activeBtn`/`idleBtn` pattern).
 
-## Naming
+## Naming And Coordinates
 
-- Python: `snake_case` files & funcs. Object class labels:
-  `sniper|tank|atgm|ifv|mortar|howitzer|mlrs|uav_recon|ew`,
-  box classes `car|container|wall|house|shelter`.
-- Coordinates always **UTM metres**; outputs aim for UTM/MGRS grid refs.
-- Frame convention in viewer: **E→X, U→Y (up), N→−Z**.
+- Python files/functions use `snake_case`; TypeScript components use `PascalCase`; frontend helpers/types use idiomatic TS naming.
+- Box class labels are `car | container | wall | house | shelter`.
+- Doctrinal unit types (`UNIT_CATALOG` keys): `tank | ifv | apc | assault | sniper | mortar`. Legacy alias `sniper_op` resolves to `sniper`.
+- `Side`: `friendly | hostile | unknown`. `FireKind`: `direct | indirect | observer`. `ThreatRole`: `observer | anti_armor | indirect`.
+- OPFOR conceptual labels in docs include `sniper | tank | atgm | ifv | mortar | howitzer | mlrs | uav_recon | ew`.
+- Coordinates are UTM metres. Browser view frame is east -> X, elevation -> Y/up, north -> -Z.
+- Outputs should prefer UTM/MGRS grid references and metres because operator-facing decisions are grid-based.
 
-## Data discipline
+## Single Source Of Truth Discipline
 
-- **Never commit data** — `data/*.{ply,json,pcd,las,laz,bag}` gitignored.
-  Generated web assets (`src/frontend/public/*`), figures (`docs/figures/`,
-  `*.png/*.jpg`), and `uv.lock` are gitignored too.
-- Verify the data by parsing it; don't trust marketing claims (see `data.md`).
+- `units.UNIT_CATALOG` is the single source of truth for per-type unit properties. The analysis chain (`threat_template`, `fields`) and the frontend (`GET /api/unit-profiles`) both read from it; neither side keeps a hand-maintained duplicate.
+- `types.ts` mirrors the backend pydantic models (`UnitProfile`/`UnitContact`/`PlaceUnitRequest` mirror `units.py`). Keep them in sync when the backend model changes.
 
-## Git / workflow
+## Data Discipline
+
+- Never commit provided data or generated analysis: `data/*.{ply,json,pcd,las,laz,bag}`, `build/`, rendered figures, screenshots, and frontend build/cache outputs are ignored.
+- Verify dataset claims by parsing files, not by trusting descriptions. Use `inspect_ply.py` and documented stats in `docs/data.md`.
+- `.docs/repo-context.md` is generated by repomix. Do not hand-edit it.
+- Repomix output may include generated cache files if they are present and not ignored; do not treat `src/frontend/.vite/` or stale `docs/repo-context.md` as source.
+
+## Git / Workflow
 
 - Work on feature branches off `main`.
-- **Agent never commits, pushes, or amends unless explicitly told to.**
-- Dependabot: weekly pip updates, grouped (streamlit*), reviewer `patrickab`.
+- Agents must not commit, push, or amend unless the user explicitly asks.
+- Dependabot is configured for weekly pip updates, grouped.
 
-## Testing
+## Information Panel Popup
 
-No test suite yet. Sanity-check via `inspect_ply.py`. Keep tactical outputs
-**operator-actionable in < 10 s** (a working demo over slides; honest "here's
-where it breaks" over over-claiming).
+Any popup that surfaces details for a scene object uses `InfoPanelPopup` (`src/frontend/src/components/InfoPanelPopup.tsx`).
+
+**Contract:**
+- `screen: ScreenPoint | null` — projected screen position of the anchor world coordinate. The Viewer's render loop calls `emitCursorScreen()` each frame, which projects `cursorAnchor` (a UTM world coord) into screen space and pushes the result into `store.selectedCursor.screen`. This makes the popup follow the object as the camera moves, unlike a raw click-position which would drift.
+- `header` — ReactNode rendered alongside the close button.
+- `onClose` — clears the relevant store selection (`select(null)`, `selectThreat(null)`, `selectUnit(null)`).
+- `children` — detail rows, typically using the exported `DataRow` component.
+
+**Wiring a new popup:**
+1. Store action sets `selectedCursor: { screen: clickPos, world: utmCoord }` and the relevant selection field.
+2. Viewer calls `setCursorAnchor(world)` (via `SceneCanvas` effect) so the render loop tracks it.
+3. The popup component reads `selectedCursor.screen` for position and its own selection slice for content.
+4. Wrap with `InfoPanelPopup` — no bespoke position arithmetic needed.
+
+**Existing consumers:** `ObjectPopup` (bounding boxes), `ThreatPopup` (analyzed threat positions), `PlacedUnitPopup` (operator-placed enemies and friendlies).
+
+## Testing And Checks
+
+- No comprehensive automated test suite is present yet.
+- Backend sanity checks: `uv run python src/backend/scripts/inspect_ply.py` and `uv run python src/backend/visibility.py` when data is available.
+- Threat pipeline regen: `uv run python src/backend/fields.py` (or `POST /api/threat/recompute` at runtime after placing units).
+- Frontend build check: `npm --prefix src/frontend run build`.
+- Keep tactical outputs operator-actionable in under 10 seconds and be explicit about model/data limits.

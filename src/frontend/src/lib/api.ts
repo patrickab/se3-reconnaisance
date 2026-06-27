@@ -85,6 +85,16 @@ export const postUnit = (req: PlaceUnitRequest): Promise<UnitContact> =>
     return r.json()
   })
 
+export const patchUnit = (id: string, patch: { azimuth?: number; world?: [number, number, number]; confidence?: number }): Promise<UnitContact> =>
+  fetch(`/api/units/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  }).then((r) => {
+    if (!r.ok) throw new Error(`PATCH /api/units/${id} → ${r.status}`)
+    return r.json()
+  })
+
 export const deleteUnit = (id: string): Promise<void> =>
   fetch(`/api/units/${id}`, { method: 'DELETE' }).then(() => undefined)
 

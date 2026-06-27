@@ -63,6 +63,13 @@ class Source(str, Enum):
     templated = "templated"
 
 
+class UpdateUnitRequest(BaseModel):
+    """Partial update — only supplied fields are applied."""
+    azimuth:    float | None = None
+    world:      tuple[float, float, float] | None = None
+    confidence: float | None = None
+
+
 class PlaceUnitRequest(BaseModel):
     """Thin POST body — backend fills doctrinal defaults from UNIT_CATALOG.
 

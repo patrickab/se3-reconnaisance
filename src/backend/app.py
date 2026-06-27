@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 
 from src.backend.io import read_ply
 from src.backend.terrain import build_dsm
-from src.backend.units import PlaceUnitRequest, UnitContact, resolve_unit, unit_profiles
+from src.backend.units import PlaceUnitRequest, UpdateUnitRequest, UnitContact, resolve_unit, unit_profiles
 from src.backend.visibility import viewshed
 
 if TYPE_CHECKING:
@@ -279,6 +279,17 @@ def place_unit(req: PlaceUnitRequest) -> UnitContact:
     contact = resolve_unit(req.unit_type.value).new_contact(req)
     UNITS[contact.id] = contact
     return contact
+
+
+@app.patch("/api/units/{unit_id}")
+def update_unit(unit_id: str, req: UpdateUnitRequest) -> UnitContact:
+    contact = UNITS.get(unit_id)
+    if not contact:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="unit not found")
+    data = req.model_dump(exclude_none=True)
+    UNITS[unit_id] = contact.model_copy(update=data)
+    return UNITS[unit_id]
 
 
 @app.delete("/api/units/{unit_id}")
