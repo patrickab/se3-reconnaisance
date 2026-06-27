@@ -39,6 +39,8 @@ export interface ThreatPosition {
   role: ThreatRole
   type: ThreatType
   world: [number, number, number]
+  facing_deg: number
+  arc_deg: number
   score: number
   sees_pct_of_approach: number
   cover_dist_m: number
@@ -51,6 +53,8 @@ export interface ThreatInfo {
   side: string
   aa_points: number
   range_m: number
+  avenue: [number, number][]
+  avenue_centroid: [number, number]
   positions: ThreatPosition[]
 }
 

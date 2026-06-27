@@ -371,6 +371,35 @@ export class Viewer {
       icon.userData.threat = p
       this.threatGroup.add(ring, pole, icon)
       this.threatPickables.push(icon)
+
+      // sector of fire — a ground wedge showing which way this shooter observes/engages.
+      // After rotate.x=-90 the circle's local +X→east, +Y→north, so thetaStart matches our
+      // facing convention (deg from east, CCW), opening toward the avenue of approach.
+      if (p.role !== 'indirect' && p.arc_deg > 0) {
+        const wedge = new THREE.Mesh(
+          new THREE.CircleGeometry(140, 40, (p.facing_deg - p.arc_deg / 2) * Math.PI / 180, p.arc_deg * Math.PI / 180),
+          new THREE.MeshBasicMaterial({ color: ENEMY, transparent: true, opacity: 0.13, side: THREE.DoubleSide, depthWrite: false })
+        )
+        wedge.rotation.x = -Math.PI / 2
+        wedge.position.set(vx, groundY + 0.25, vz)
+        this.threatGroup.add(wedge)
+      }
+    }
+
+    // OUR avenue of approach — the input that drives enemy facing. Blue dots = where we
+    // templated our advance from; the arrow = axis toward the objective (scene centre).
+    if (threat.avenue?.length) {
+      const FRIEND = 0x3b82f6
+      for (const [E, N] of threat.avenue) {
+        const [ax, , az] = w2v([E, N, meta.origin[2]], meta.origin, meta.span)
+        const dot = new THREE.Mesh(new THREE.SphereGeometry(3.5, 8, 8), new THREE.MeshBasicMaterial({ color: FRIEND }))
+        dot.position.set(ax, groundY + 2, az)
+        this.threatGroup.add(dot)
+      }
+      const [cE, cN] = threat.avenue_centroid
+      const [sx0, , sz0] = w2v([cE, cN, meta.origin[2]], meta.origin, meta.span)
+      const dir = new THREE.Vector3(-sx0, 0, -sz0).normalize() // toward objective (scene centre)
+      this.threatGroup.add(new THREE.ArrowHelper(dir, new THREE.Vector3(sx0, groundY + 5, sz0), 140, FRIEND, 36, 22))
     }
   }
 

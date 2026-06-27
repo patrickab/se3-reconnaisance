@@ -66,6 +66,8 @@ def main() -> None:
 
     # ---- 1. accumulate viewsheds from the avenue of approach (reciprocity) ----
     aa = sample_avenue(bounds, args.side)
+    aa_cx = float(np.mean([p[0] for p in aa]))               # AA centroid: shooters orient on it
+    aa_cy = float(np.mean([p[1] for p in aa]))
     acc = np.zeros((h, w), dtype=np.float32)
     for (ax, ay) in aa:
         col = int((ax - transform.c) / transform.a)
@@ -130,11 +132,14 @@ def main() -> None:
             if any((r - sr) ** 2 + (c - sc) ** 2 < sep2 for sr, sc in chosen):
                 continue
             chosen.append((r, c))
+            E = transform.c + (c + 0.5) * transform.a
+            N = transform.f - (r + 0.5) * (-transform.e)
+            facing = 0.0 if indirect else float(np.degrees(np.arctan2(aa_cy - N, aa_cx - E)))
             out.append({
                 "role": role, "type": atype,
-                "world": [round(transform.c + (c + 0.5) * transform.a, 1),
-                          round(transform.f - (r + 0.5) * (-transform.e), 1),
-                          round(float(dsm[r, c]), 1)],
+                "world": [round(E, 1), round(N, 1), round(float(dsm[r, c]), 1)],
+                "facing_deg": round(facing, 0),                  # oriented onto our avenue of approach
+                "arc_deg": {"sniper_op": 200, "tank": 100}.get(atype, 0),  # sector of fire
                 "score": round(float(smap[r, c]), 3),
                 "sees_pct_of_approach": round(100 * float(observation[r, c]), 0),
                 "cover_dist_m": round(float(cover_dist[r, c]), 1),
@@ -144,9 +149,16 @@ def main() -> None:
             })
         return out
 
-    elevated = hag > 4                                       # rooftop / upper-floor vs ground level
-    positions = (extract(np.where(elevated, direct, 0), args.k_obs, "observer", "sniper_op")
-                 + extract(np.where(~elevated, direct, 0), args.k_at, "anti_armor", "tank")
+    # Observers go on real building platforms (house/shelter) — NOT raw DSM canopy, which
+    # would put a "sniper" on a treetop (trees aren't in the box set). Anti-armor sits on
+    # low, trafficable ground. This fixes the most concrete placement bug.
+    buildings = [b for b in boxes if b["class_label"] in ("house", "shelter")]
+    on_building = (rasterize([(box_polygon(b), 1) for b in buildings], out_shape=(h, w),
+                             transform=transform, fill=0, dtype="uint8").astype(bool)
+                   if buildings else np.zeros((h, w), bool))
+    ground = (~on_building) & (hag < 3)                      # low, on the deck (not canopy/roof)
+    positions = (extract(np.where(on_building, direct, 0), args.k_obs, "observer", "sniper_op")
+                 + extract(np.where(ground, direct, 0), args.k_at, "anti_armor", "tank")
                  + extract(indirect, args.k_indirect, "indirect", "mortar", indirect=True))
     for i, p in enumerate(positions):
         p["id"] = f"red_{i}"
@@ -168,7 +180,10 @@ def main() -> None:
     (BUILD / "threat.bin").write_bytes(heat.tobytes())
 
     # positions carry world (UTM) coords; the viewer maps them with w2v()
+    # `avenue` = where we templated OUR approach from — the input that drives enemy facing.
     info = {"side": args.side, "aa_points": len(aa), "range_m": args.rng,
+            "avenue": [[round(x, 1), round(y, 1)] for x, y in aa],
+            "avenue_centroid": [round(aa_cx, 1), round(aa_cy, 1)],
             "positions": positions}
     (BUILD / "threat.json").write_text(json.dumps(info))
 
