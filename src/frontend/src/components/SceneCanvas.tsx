@@ -30,7 +30,7 @@ export default function SceneCanvas() {
 
     ;(async () => {
       try {
-        const [meta, boxes, viewshedInfo, threatInfo, fieldsInfo] = await Promise.all([
+        const [meta, boxes, viewshedInfo, rawThreat, rawFields] = await Promise.all([
           api.fetchMeta(),
           api.fetchBoxes(),
           api.fetchViewshedInfo(),
@@ -38,6 +38,11 @@ export default function SceneCanvas() {
           api.fetchFieldsInfo(),
         ])
         if (disposed) return
+        // The enemy is only revealed once the operator has placed their own troops and
+        // scanned — never an auto/default laydown. Gate the whole threat picture on it.
+        const analyzed = rawThreat?.avenue_source === 'operator'
+        const threatInfo = analyzed ? rawThreat : null
+        const fieldsInfo = analyzed ? rawFields : null
         useStore.getState().setData({ meta, boxes, viewshedInfo, threatInfo, fieldsInfo })
         const ready = await viewer.load(meta, boxes, viewshedInfo, threatInfo, fieldsInfo)
         viewer.setClassVisibility(useStore.getState().classVisibility)

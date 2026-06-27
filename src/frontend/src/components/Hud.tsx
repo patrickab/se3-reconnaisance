@@ -85,13 +85,13 @@ export default function Hud() {
                   : mode.needs === 'threat' ? threatReady
                   : mode.needs === 'fields' ? fieldsReady
                   : true
-                const script = mode.needs === 'threat' ? 'threat_template.py' : mode.needs === 'fields' ? 'fields.py' : 'visibility.py'
+                const hint = mode.needs === 'viewshed' ? 'run visibility.py' : 'place your troops, then Scan'
                 return (
                   <button
                     key={mode.key}
                     disabled={!ready}
                     onClick={() => ready && setColorMode(mode.key)}
-                    title={!ready ? `run ${script}` : undefined}
+                    title={!ready ? hint : undefined}
                     className={`min-w-0 truncate px-2 py-1.5 transition hover:text-tactical-text disabled:cursor-not-allowed disabled:opacity-40 ${
                       active ? 'bg-tactical-accent/15 text-tactical-accent shadow-[inset_0_0_0_1px_rgb(208_168_92_/_0.28)]'
                         : mode.key === 'threat' ? 'text-tactical-danger'
