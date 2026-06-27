@@ -22,7 +22,7 @@ interface AppState {
   selectedThreat: ThreatPosition | null
   selectedThreatPoint: ScreenPoint | null
   placing: boolean
-  friendly: [number, number][]
+  friendly: [number, number, number][]
   scanning: boolean
 
   setData: (d: { meta: CloudMeta; boxes: BoundingBox[]; viewshedInfo: ViewshedInfo | null; threatInfo: ThreatInfo | null; fieldsInfo: FieldsInfo | null }) => void
@@ -37,7 +37,7 @@ interface AppState {
   selectThreat: (selectedThreat: ThreatPosition | null, selectedThreatPoint?: ScreenPoint | null) => void
   setSelectedCursorScreen: (screen: ScreenPoint) => void
   setPlacing: (placing: boolean) => void
-  addFriendly: (e: number, n: number) => void
+  addFriendly: (e: number, n: number, u: number) => void
   clearFriendly: () => void
   setScanning: (scanning: boolean) => void
 }
@@ -88,7 +88,7 @@ export const useStore = create<AppState>((set) => ({
     s.selectedCursor ? { selectedCursor: { ...s.selectedCursor, screen } } : {}
   )),
   setPlacing: (placing) => set({ placing }),
-  addFriendly: (e, n) => set((s) => ({ friendly: [...s.friendly, [e, n]] })),
+  addFriendly: (e, n, u) => set((s) => ({ friendly: [...s.friendly, [e, n, u]] })),
   clearFriendly: () => set({ friendly: [] }),
   setScanning: (scanning) => set({ scanning }),
 }))

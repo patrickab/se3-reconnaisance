@@ -55,7 +55,7 @@ export interface ThreatInfo {
   side: string
   aa_points: number
   range_m: number
-  avenue: [number, number][]
+  avenue: [number, number, number][]
   avenue_centroid: [number, number]
   positions: ThreatPosition[]
 }

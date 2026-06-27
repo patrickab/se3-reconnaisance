@@ -48,7 +48,7 @@ export class Viewer {
   private threatPickables: THREE.Mesh[] = []
   private pickCb: (box: BoundingBox | null, cursor?: SceneCursor) => void = () => {}
   private placing = false
-  private placeCb: (e: number, n: number) => void = () => {}
+  private placeCb: (e: number, n: number, u: number) => void = () => {}
   private pickThreatCb: (p: ThreatPosition | null, point?: { x: number; y: number }) => void = () => {}
   private cursorScreenCb: (screen: ScreenPoint) => void = () => {}
   private cursorAnchor?: WorldCoordinate
@@ -308,26 +308,16 @@ export class Viewer {
     this.canvas.style.cursor = on ? 'crosshair' : 'default'
   }
 
-  onPlaceFriendly(cb: (e: number, n: number) => void) {
+  onPlaceFriendly(cb: (e: number, n: number, u: number) => void) {
     this.placeCb = cb
   }
 
   /** Render the operator's troop positions (blue cones) from store state. */
-  setFriendlyMarkers(points: [number, number][]) {
+  setFriendlyMarkers(points: [number, number, number][]) {
     this.clearGroup(this.friendlyGroup)
     if (!this.meta) return
-    const groundY = -this.meta.span[2] / 2
-    for (const [E, N] of points) {
-      const [vx, , vz] = w2v([E, N, this.meta.origin[2]], this.meta.origin, this.meta.span)
-      const cone = new THREE.Mesh(new THREE.ConeGeometry(6, 16, 4), new THREE.MeshBasicMaterial({ color: 0x3b82f6 }))
-      cone.position.set(vx, groundY + 11, vz)
-      const ring = new THREE.Mesh(
-        new THREE.RingGeometry(5, 8, 20),
-        new THREE.MeshBasicMaterial({ color: 0x3b82f6, transparent: true, opacity: 0.7, side: THREE.DoubleSide })
-      )
-      ring.rotation.x = -Math.PI / 2
-      ring.position.set(vx, groundY + 0.3, vz)
-      this.friendlyGroup.add(cone, ring)
+    for (const [E, N, U] of points) {
+      this.friendlyGroup.add(...this.friendlyMarker(E, N, U, this.meta))
     }
   }
 
@@ -403,20 +393,53 @@ export class Viewer {
 
   // Likely enemy positions (threat template output) → distinct 3D assets:
   // ◆ sniper/OP · ▮ tank · ⬢ mortar. The markers ARE the verification.
+  // Flat ground overlays (rings, sector wedges, crosshairs) must render ON TOP of the
+  // cloud — otherwise they sit at the scene's min elevation and get buried under the
+  // undulating terrain (only visible from underneath). depthTest off + high renderOrder.
+  private decal<T extends THREE.Mesh>(mesh: T): T {
+    const m = mesh.material as THREE.MeshBasicMaterial
+    m.depthTest = false
+    m.depthWrite = false
+    m.transparent = true
+    mesh.renderOrder = 4
+    return mesh
+  }
+
+  // A prominent friendly-troop marker (raised blue pole + cone icon + ground ring),
+  // matching the enemy markers so our disposition is just as visible from the top.
+  private friendlyMarker(E: number, N: number, U: number, meta: CloudMeta): THREE.Object3D[] {
+    const FRIEND = 0x3b82f6
+    const [vx, vy, vz] = w2v([E, N, U], meta.origin, meta.span)
+    const top = vy + 26
+    const pole = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(vx, vy, vz), new THREE.Vector3(vx, top, vz)]),
+      new THREE.LineBasicMaterial({ color: FRIEND })
+    )
+    const icon = new THREE.Mesh(new THREE.ConeGeometry(7, 16, 4), new THREE.MeshBasicMaterial({ color: FRIEND }))
+    icon.position.set(vx, top, vz)
+    icon.rotation.y = Math.PI / 4
+    const ring = this.decal(new THREE.Mesh(
+      new THREE.RingGeometry(6, 9, 24),
+      new THREE.MeshBasicMaterial({ color: FRIEND, opacity: 0.85, side: THREE.DoubleSide })
+    ))
+    ring.rotation.x = -Math.PI / 2
+    ring.position.set(vx, vy + 0.5, vz)
+    return [pole, icon, ring]
+  }
+
   private buildThreat(threat: ThreatInfo, meta: CloudMeta) {
     const ENEMY = 0xff2b2b
-    const groundY = -meta.span[2] / 2
     for (const p of threat.positions) {
       const [vx, vy, vz] = w2v(p.world, meta.origin, meta.span)
       const top = vy + 28
-      const ring = new THREE.Mesh(
+      const ring = this.decal(new THREE.Mesh(
         new THREE.RingGeometry(8, 12, 32),
-        new THREE.MeshBasicMaterial({ color: ENEMY, transparent: true, opacity: 0.7, side: THREE.DoubleSide })
-      )
+        new THREE.MeshBasicMaterial({ color: ENEMY, opacity: 0.8, side: THREE.DoubleSide })
+      ))
       ring.rotation.x = -Math.PI / 2
-      ring.position.set(vx, groundY + 0.3, vz)
+      ring.position.set(vx, vy + 0.3, vz)
       const pole = new THREE.Line(
-        new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(vx, groundY, vz), new THREE.Vector3(vx, top, vz)]),
+        new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(vx, vy, vz), new THREE.Vector3(vx, top, vz)]),
         new THREE.LineBasicMaterial({ color: ENEMY })
       )
       const geo =
@@ -430,33 +453,33 @@ export class Viewer {
       this.threatPickables.push(icon)
 
       // sector of fire — a ground wedge showing which way this shooter observes/engages.
-      // After rotate.x=-90 the circle's local +X→east, +Y→north, so thetaStart matches our
-      // facing convention (deg from east, CCW), opening toward the avenue of approach.
+      // At the shooter's own elevation (not the scene floor) and drawn on top of the cloud.
       if (p.role !== 'indirect' && p.arc_deg > 0) {
-        const wedge = new THREE.Mesh(
+        const wedge = this.decal(new THREE.Mesh(
           new THREE.CircleGeometry(140, 40, (p.facing_deg - p.arc_deg / 2) * Math.PI / 180, p.arc_deg * Math.PI / 180),
-          new THREE.MeshBasicMaterial({ color: ENEMY, transparent: true, opacity: 0.13, side: THREE.DoubleSide, depthWrite: false })
-        )
+          new THREE.MeshBasicMaterial({ color: ENEMY, opacity: 0.16, side: THREE.DoubleSide })
+        ))
+        wedge.renderOrder = 3 // beneath the rings/markers but above the cloud
         wedge.rotation.x = -Math.PI / 2
-        wedge.position.set(vx, groundY + 0.25, vz)
+        wedge.position.set(vx, vy + 0.2, vz)
         this.threatGroup.add(wedge)
       }
     }
 
-    // OUR avenue of approach — the input that drives enemy facing. Blue dots = where we
-    // templated our advance from; the arrow = axis toward the objective (scene centre).
+    // OUR troops / avenue of approach — prominent blue markers (the friendly disposition
+    // the enemy is templated against), + an advance-axis arrow toward the objective.
     if (threat.avenue?.length) {
       const FRIEND = 0x3b82f6
-      for (const [E, N] of threat.avenue) {
-        const [ax, , az] = w2v([E, N, meta.origin[2]], meta.origin, meta.span)
-        const dot = new THREE.Mesh(new THREE.SphereGeometry(3.5, 8, 8), new THREE.MeshBasicMaterial({ color: FRIEND }))
-        dot.position.set(ax, groundY + 2, az)
-        this.threatGroup.add(dot)
+      let mu = 0
+      for (const [E, N, U] of threat.avenue) {
+        this.threatGroup.add(...this.friendlyMarker(E, N, U, meta))
+        mu += U
       }
+      mu /= threat.avenue.length
       const [cE, cN] = threat.avenue_centroid
-      const [sx0, , sz0] = w2v([cE, cN, meta.origin[2]], meta.origin, meta.span)
+      const [sx0, sy0, sz0] = w2v([cE, cN, mu], meta.origin, meta.span)
       const dir = new THREE.Vector3(-sx0, 0, -sz0).normalize() // toward objective (scene centre)
-      this.threatGroup.add(new THREE.ArrowHelper(dir, new THREE.Vector3(sx0, groundY + 5, sz0), 140, FRIEND, 36, 22))
+      this.threatGroup.add(new THREE.ArrowHelper(dir, new THREE.Vector3(sx0, sy0 + 18, sz0), 150, FRIEND, 40, 24))
     }
   }
 
@@ -466,13 +489,13 @@ export class Viewer {
     const groundY = -meta.span[2] / 2
     for (const [E, N] of fields.trps) {
       const [vx, , vz] = w2v([E, N, meta.origin[2]], meta.origin, meta.span)
-      const ring = new THREE.Mesh(
+      const ring = this.decal(new THREE.Mesh(
         new THREE.RingGeometry(6, 9, 28),
-        new THREE.MeshBasicMaterial({ color: TRP, transparent: true, opacity: 0.85, side: THREE.DoubleSide })
-      )
+        new THREE.MeshBasicMaterial({ color: TRP, opacity: 0.9, side: THREE.DoubleSide })
+      ))
       ring.rotation.x = -Math.PI / 2
       ring.position.set(vx, groundY + 0.4, vz)
-      const bar = new THREE.Mesh(new THREE.BoxGeometry(16, 0.6, 2), new THREE.MeshBasicMaterial({ color: TRP }))
+      const bar = this.decal(new THREE.Mesh(new THREE.BoxGeometry(16, 1, 2), new THREE.MeshBasicMaterial({ color: TRP })))
       bar.position.set(vx, groundY + 0.5, vz)
       const bar2 = bar.clone()
       bar2.rotation.y = Math.PI / 2
@@ -622,7 +645,8 @@ export class Viewer {
       if (hit) {
         const E = hit.point.x + (this.meta.origin[0] + this.meta.span[0] / 2)
         const N = (this.meta.origin[1] + this.meta.span[1] / 2) - hit.point.z
-        this.placeCb(E, N)
+        const U = hit.point.y + (this.meta.origin[2] + this.meta.span[2] / 2) // clicked surface elevation
+        this.placeCb(E, N, U)
       }
       return
     }

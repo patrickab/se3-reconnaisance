@@ -26,7 +26,7 @@ export default function SceneCanvas() {
     viewer.onCursorScreen((screen) => useStore.getState().setSelectedCursorScreen(screen))
     viewer.onPick((b, cursor) => useStore.getState().select(b, cursor ?? null))
     viewer.onPickThreat((p, point) => useStore.getState().selectThreat(p, point ?? null))
-    viewer.onPlaceFriendly((e, n) => useStore.getState().addFriendly(e, n))
+    viewer.onPlaceFriendly((e, n, u) => useStore.getState().addFriendly(e, n, u))
 
     ;(async () => {
       try {

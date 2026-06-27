@@ -192,9 +192,16 @@ def run(side: str = "west", res: float = 2.0, rng: float = 1000.0,
 
     # positions carry world (UTM) coords; the viewer maps them with w2v()
     # `avenue` = where we templated OUR approach from — the input that drives enemy facing.
+    # include each point's ground elevation so its marker sits on the surface, not the
+    # scene's global minimum (which renders under the terrain).
+    def _elev(ax: float, ay: float) -> float:
+        col = int((ax - transform.c) / transform.a)
+        row = int((transform.f - ay) / (-transform.e))
+        return round(float(dsm[row, col]), 1) if 0 <= row < h and 0 <= col < w else round(float(np.nanmin(dsm)), 1)
+
     info = {"side": side, "aa_points": len(aa), "range_m": rng,
             "avenue_source": aa_source,
-            "avenue": [[round(x, 1), round(y, 1)] for x, y in aa],
+            "avenue": [[round(x, 1), round(y, 1), _elev(x, y)] for x, y in aa],
             "avenue_centroid": [round(aa_cx, 1), round(aa_cy, 1)],
             "positions": positions}
     (BUILD / "threat.json").write_text(json.dumps(info))

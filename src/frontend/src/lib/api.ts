@@ -57,7 +57,7 @@ export const fetchViewshedAt = async (world: WorldCoordinate): Promise<ViewshedR
 }
 
 // Re-template the enemy from operator-placed friendly positions. Heavy (~30-60 s).
-export const postRecompute = (friendly: [number, number][]): Promise<{ ok: boolean; avenue_source: string }> =>
+export const postRecompute = (friendly: [number, number, number][]): Promise<{ ok: boolean; avenue_source: string }> =>
   fetch('/api/threat/recompute', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
