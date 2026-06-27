@@ -16,7 +16,6 @@ const MODES: { key: ColorMode; label: string; needs?: 'viewshed' | 'threat' | 'f
   { key: 'height', label: 'Height' },
   { key: 'temperature', label: 'Temp.' },
   { key: 'viewshed', label: 'LOS', needs: 'viewshed' },
-  { key: 'threat', label: 'Threat', needs: 'threat' },
   { key: 'danger', label: 'Danger', needs: 'fields' },
   { key: 'depth', label: 'Kill zone', needs: 'fields' },
 ]

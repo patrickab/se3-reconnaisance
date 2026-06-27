@@ -45,10 +45,12 @@ export class Viewer {
   private observerGroup = new THREE.Group()
   private threatGroup = new THREE.Group()
   private friendlyGroup = new THREE.Group()
+  private placedEnemyGroup = new THREE.Group()
   private threatPickables: THREE.Mesh[] = []
   private pickCb: (box: BoundingBox | null, cursor?: SceneCursor) => void = () => {}
-  private placing = false
+  private placing: 'enemy' | 'friendly' | null = null
   private placeCb: (e: number, n: number, u: number) => void = () => {}
+  private placeEnemyCb: (e: number, n: number, u: number) => void = () => {}
   private pickThreatCb: (p: ThreatPosition | null, point?: { x: number; y: number }) => void = () => {}
   private cursorScreenCb: (screen: ScreenPoint) => void = () => {}
   private cursorAnchor?: WorldCoordinate
@@ -63,7 +65,7 @@ export class Viewer {
 
   constructor(private canvas: HTMLCanvasElement) {
     this.scene.background = new THREE.Color(0x080c10)
-    this.scene.add(this.boxGroup, this.observerGroup, this.threatGroup, this.friendlyGroup)
+    this.scene.add(this.boxGroup, this.observerGroup, this.threatGroup, this.friendlyGroup, this.placedEnemyGroup)
 
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' })
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2.5))
@@ -302,14 +304,45 @@ export class Viewer {
     this.emitCursorScreen()
   }
 
-  // ---- operator-placed friendly troops ----
-  setPlacing(on: boolean) {
-    this.placing = on
-    this.canvas.style.cursor = on ? 'crosshair' : 'default'
+  // ---- operator placement (enemy from intel, or our own positions) ----
+  setPlacing(mode: 'enemy' | 'friendly' | null) {
+    this.placing = mode
+    this.canvas.style.cursor = mode ? 'crosshair' : 'default'
   }
 
   onPlaceFriendly(cb: (e: number, n: number, u: number) => void) {
     this.placeCb = cb
+  }
+
+  onPlaceEnemy(cb: (e: number, n: number, u: number) => void) {
+    this.placeEnemyCb = cb
+  }
+
+  /** Provisional red enemy markers (before analysis), from the operator's placements. */
+  setEnemyMarkers(enemies: { e: number; n: number; u: number; type: string }[]) {
+    this.clearGroup(this.placedEnemyGroup)
+    if (!this.meta) return
+    const ENEMY = 0xff2b2b
+    for (const en of enemies) {
+      const [vx, vy, vz] = w2v([en.e, en.n, en.u], this.meta.origin, this.meta.span)
+      const top = vy + 26
+      const geo = en.type === 'sniper_op' ? new THREE.OctahedronGeometry(9)
+        : en.type === 'mortar' ? new THREE.CylinderGeometry(7, 7, 12, 18)
+        : new THREE.BoxGeometry(16, 9, 20)
+      const icon = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: ENEMY }))
+      icon.position.set(vx, top, vz)
+      const pole = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(vx, vy, vz), new THREE.Vector3(vx, top, vz)]),
+        new THREE.LineBasicMaterial({ color: ENEMY })
+      )
+      const ring = this.decal(new THREE.Mesh(
+        new THREE.RingGeometry(8, 12, 28),
+        new THREE.MeshBasicMaterial({ color: ENEMY, opacity: 0.8, side: THREE.DoubleSide })
+      ))
+      ring.rotation.x = -Math.PI / 2
+      ring.position.set(vx, vy + 0.3, vz)
+      this.placedEnemyGroup.add(icon, pole, ring)
+    }
   }
 
   /** Render the operator's troop positions (blue cones) from store state. */
@@ -646,7 +679,7 @@ export class Viewer {
         const E = hit.point.x + (this.meta.origin[0] + this.meta.span[0] / 2)
         const N = (this.meta.origin[1] + this.meta.span[1] / 2) - hit.point.z
         const U = hit.point.y + (this.meta.origin[2] + this.meta.span[2] / 2) // clicked surface elevation
-        this.placeCb(E, N, U)
+        ;(this.placing === 'enemy' ? this.placeEnemyCb : this.placeCb)(E, N, U)
       }
       return
     }

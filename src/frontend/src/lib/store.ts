@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { BoundingBox, BoxClass, ClassVisibility, CloudMeta, ColorMode, FieldsInfo, LayerKey, Layers, SceneCursor, ScreenPoint, ThreatInfo, ThreatPosition, ViewshedInfo } from './types'
+import { BoundingBox, BoxClass, ClassVisibility, CloudMeta, ColorMode, FieldsInfo, LayerKey, Layers, PlacedEnemy, SceneCursor, ScreenPoint, ThreatInfo, ThreatPosition, ThreatType, ViewshedInfo } from './types'
 
 interface AppState {
   meta: CloudMeta | null
@@ -21,7 +21,9 @@ interface AppState {
   selectedCursor: SceneCursor | null
   selectedThreat: ThreatPosition | null
   selectedThreatPoint: ScreenPoint | null
-  placing: boolean
+  placing: 'enemy' | 'friendly' | null
+  enemyType: ThreatType
+  enemies: PlacedEnemy[]
   friendly: [number, number, number][]
   scanning: boolean
 
@@ -36,7 +38,10 @@ interface AppState {
   select: (selected: BoundingBox | null, selectedCursor?: SceneCursor | null) => void
   selectThreat: (selectedThreat: ThreatPosition | null, selectedThreatPoint?: ScreenPoint | null) => void
   setSelectedCursorScreen: (screen: ScreenPoint) => void
-  setPlacing: (placing: boolean) => void
+  setPlacing: (placing: 'enemy' | 'friendly' | null) => void
+  setEnemyType: (t: ThreatType) => void
+  addEnemy: (e: number, n: number, u: number) => void
+  clearEnemies: () => void
   addFriendly: (e: number, n: number, u: number) => void
   clearFriendly: () => void
   setScanning: (scanning: boolean) => void
@@ -70,7 +75,9 @@ export const useStore = create<AppState>((set) => ({
   selectedCursor: null,
   selectedThreat: null,
   selectedThreatPoint: null,
-  placing: false,
+  placing: null,
+  enemyType: 'sniper_op',
+  enemies: [],
   friendly: [],
   scanning: false,
 
@@ -88,6 +95,9 @@ export const useStore = create<AppState>((set) => ({
     s.selectedCursor ? { selectedCursor: { ...s.selectedCursor, screen } } : {}
   )),
   setPlacing: (placing) => set({ placing }),
+  setEnemyType: (enemyType) => set({ enemyType }),
+  addEnemy: (e, n, u) => set((s) => ({ enemies: [...s.enemies, { e, n, u, type: s.enemyType }] })),
+  clearEnemies: () => set({ enemies: [] }),
   addFriendly: (e, n, u) => set((s) => ({ friendly: [...s.friendly, [e, n, u]] })),
   clearFriendly: () => set({ friendly: [] }),
   setScanning: (scanning) => set({ scanning }),

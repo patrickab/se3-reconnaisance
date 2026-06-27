@@ -12,6 +12,7 @@ export default function SceneCanvas() {
   const overlayOnRgb = useStore((s) => s.overlayOnRgb)
   const placing = useStore((s) => s.placing)
   const friendly = useStore((s) => s.friendly)
+  const enemies = useStore((s) => s.enemies)
   const layers = useStore((s) => s.layers)
   const classVisibility = useStore((s) => s.classVisibility)
   const selected = useStore((s) => s.selected)
@@ -27,6 +28,7 @@ export default function SceneCanvas() {
     viewer.onPick((b, cursor) => useStore.getState().select(b, cursor ?? null))
     viewer.onPickThreat((p, point) => useStore.getState().selectThreat(p, point ?? null))
     viewer.onPlaceFriendly((e, n, u) => useStore.getState().addFriendly(e, n, u))
+    viewer.onPlaceEnemy((e, n, u) => useStore.getState().addEnemy(e, n, u))
 
     ;(async () => {
       try {
@@ -74,6 +76,10 @@ export default function SceneCanvas() {
   useEffect(() => {
     viewerRef.current?.setFriendlyMarkers(friendly)
   }, [friendly])
+
+  useEffect(() => {
+    viewerRef.current?.setEnemyMarkers(enemies)
+  }, [enemies])
 
   useEffect(() => {
     const v = viewerRef.current

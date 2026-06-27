@@ -1,4 +1,4 @@
-import { CloudMeta, BoundingBox, ViewshedInfo, ThreatInfo, FieldsInfo, WorldCoordinate, ViewshedResult } from './types'
+import { CloudMeta, BoundingBox, ViewshedInfo, ThreatInfo, FieldsInfo, WorldCoordinate, ViewshedResult, PlacedEnemy } from './types'
 
 // Relative URLs: dev goes through the Vite proxy (vite.config.ts), prod is
 // served same-origin. Required GETs throw; optional ones resolve to null.
@@ -56,12 +56,12 @@ export const fetchViewshedAt = async (world: WorldCoordinate): Promise<ViewshedR
   return { flags: new Uint8Array(await r.arrayBuffer()), info: JSON.parse(info) as ViewshedInfo }
 }
 
-// Re-template the enemy from operator-placed friendly positions. Heavy (~30-60 s).
-export const postRecompute = (friendly: [number, number, number][]): Promise<{ ok: boolean; avenue_source: string }> =>
+// Build the enemy laydown from operator-placed positions + project the fields. Heavy (~15 s).
+export const postRecompute = (enemies: PlacedEnemy[], friendly: [number, number, number][]): Promise<{ ok: boolean; n_enemies: number; n_friendly: number }> =>
   fetch('/api/threat/recompute', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ friendly }),
+    body: JSON.stringify({ enemies, friendly }),
   }).then((r) => {
     if (!r.ok) throw new Error(`recompute → ${r.status}`)
     return r.json()

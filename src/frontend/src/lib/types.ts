@@ -36,6 +36,14 @@ export interface ViewshedInfo {
 export type ThreatRole = 'observer' | 'anti_armor' | 'indirect'
 export type ThreatType = 'sniper_op' | 'tank' | 'mortar'
 
+// an enemy the operator has placed on the map (before analysis)
+export interface PlacedEnemy {
+  e: number
+  n: number
+  u: number
+  type: ThreatType
+}
+
 export interface ThreatPosition {
   id: string
   role: ThreatRole

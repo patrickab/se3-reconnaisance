@@ -241,18 +241,27 @@ def fields_info() -> Response:
     return FileResponse(f, media_type="application/json")
 
 
+class PlacedEnemy(BaseModel):
+    e: float
+    n: float
+    u: float
+    type: str = "sniper_op"  # sniper_op | tank | mortar
+
+
 class RecomputeReq(BaseModel):
-    friendly: list[list[float]] = []  # operator-placed troop positions [[E, N], ...] in UTM
+    enemies: list[PlacedEnemy] = []         # operator-placed enemy positions (intel)
+    friendly: list[list[float]] = []        # our own positions [[E, N, U], ...] (optional)
 
 
 @app.post("/api/threat/recompute")
 def recompute(req: RecomputeReq) -> dict:
-    """Re-template the enemy from operator-placed friendly positions, then re-project the
-    fires/observation fields. Heavy (~30-60 s): runs the full pipeline. Lazy import breaks
-    the app<->threat_template cycle."""
+    """Build the enemy laydown from operator-placed positions, then project the
+    fires/observation fields (kill zones, danger). Lazy import breaks the
+    app<->threat_template cycle. Returns counts for the UI."""
     from src.backend import fields, threat_template  # noqa: PLC0415
 
-    friendly = [(float(p[0]), float(p[1])) for p in req.friendly] or None
-    threat = threat_template.run(friendly=friendly)
+    enemies = [e.model_dump() for e in req.enemies]
+    friendly = [(float(p[0]), float(p[1]), float(p[2])) for p in req.friendly] or None
+    threat_template.from_manual(enemies, friendly)
     fields.run()
-    return {"ok": True, "n_friendly": len(req.friendly), "avenue_source": threat["avenue_source"]}
+    return {"ok": True, "n_enemies": len(enemies), "n_friendly": len(req.friendly)}
