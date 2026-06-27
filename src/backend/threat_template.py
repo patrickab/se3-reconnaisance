@@ -59,6 +59,8 @@ def from_manual(enemies: list[dict], friendly: list[tuple[float, float, float]] 
             "id": f"red_{i}", "role": role, "type": typ,
             "world": [round(E, 1), round(N, 1), round(U, 1)],
             "facing_deg": round(facing, 0), "arc_deg": arc,
+            # intel quality of this contact (units.UnitContact.confidence) — drives risk-zone confidence
+            "confidence": round(float(en.get("confidence", 1.0)), 2),
             "score": 1.0, "sees_pct_of_approach": 0, "cover_dist_m": 0,
             "height_above_ground_m": 0, "thermal_cue": 0, "defilade_m": 0,
         })

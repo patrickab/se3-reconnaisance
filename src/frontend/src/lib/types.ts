@@ -40,7 +40,7 @@ export type ThreatType = 'sniper_op' | 'tank' | 'mortar'
 
 export type UnitSide        = 'friendly' | 'hostile' | 'unknown'
 export type UnitWeightClass = 'heavy' | 'medium' | 'light'
-export type UnitType        = 'tank' | 'ifv' | 'apc' | 'assault' | 'sniper' | 'mortar'
+export type UnitType        = 'tank' | 'ifv' | 'apc' | 'assault' | 'sniper' | 'mortar' | 'at_team' | 'atgm_team'
 export type UnitFireKind    = 'direct' | 'indirect' | 'observer'
 export type UnitSource      = 'visual' | 'thermal' | 'reported' | 'sigint' | 'templated'
 
@@ -126,7 +126,7 @@ export interface FieldsInfo {
   note: string
 }
 
-export type ColorMode = 'rgb' | 'height' | 'temperature' | 'viewshed' | 'threat' | 'danger' | 'depth'
+export type ColorMode = 'rgb' | 'height' | 'temperature' | 'viewshed' | 'threat' | 'danger' | 'depth' | 'risk'
 export type LayerKey = 'points' | 'boxes' | 'observer' | 'threats' | 'viewcones'
 export type Layers = Record<LayerKey, boolean>
 export type ClassVisibility = Record<BoxClass, boolean>

@@ -11,6 +11,7 @@ export default function SceneCanvas() {
   const analysisBusy = useRef(false)
   const analysisDirty = useRef(false)
   const colorMode = useStore((s) => s.colorMode)
+  const riskClass = useStore((s) => s.riskClass)
   const overlayOnRgb = useStore((s) => s.overlayOnRgb)
   const placing = useStore((s) => s.placing)
   const removing = useStore((s) => s.removing)
@@ -91,6 +92,7 @@ export default function SceneCanvas() {
   }, [])
 
   useEffect(() => { viewerRef.current?.setColorMode(colorMode) }, [colorMode])
+  useEffect(() => { viewerRef.current?.setRiskClass(riskClass) }, [riskClass])
   useEffect(() => { viewerRef.current?.setOverlayOnRgb(overlayOnRgb) }, [overlayOnRgb])
   useEffect(() => { viewerRef.current?.setPlacing(placing) }, [placing])
   useEffect(() => { viewerRef.current?.setRemoving(removing) }, [removing])
@@ -127,6 +129,7 @@ export default function SceneCanvas() {
           const fl = analyzed ? fieldsInfo : null
           const st = useStore.getState()
           await viewer.setThreatFields(th, fl, st.meta!)
+          if (fl) await viewer.setRiskClass(st.riskClass)   // re-tint the Risk surface for the selected class
           st.setData({ meta: st.meta!, boxes: st.boxes, viewshedInfo: st.viewshedInfo, threatInfo: th, fieldsInfo: fl })
           st.setReady({ viewshedReady: st.viewshedReady, threatReady: !!th, fieldsReady: !!fl })
         } while (analysisDirty.current)

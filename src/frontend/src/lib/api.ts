@@ -41,8 +41,12 @@ const bin = async (p: string): Promise<Uint8Array | null> => {
   const r = await fetch(p)
   return r.ok ? new Uint8Array(await r.arrayBuffer()) : null
 }
-export const fetchDanger = () => bin('/api/danger')
-export const fetchDepth = () => bin('/api/depth')
+// risk surfaces are per target class (dismount/light_veh/armour); omit for the default (dismount)
+const cq = (p: string, cls?: string) => bin(cls ? `${p}?class=${cls}` : p)
+export const fetchDanger = (cls?: string) => cq('/api/danger', cls)
+export const fetchDepth = (cls?: string) => cq('/api/depth', cls)
+export const fetchReason = (cls?: string) => cq('/api/reason', cls)  // 0 out-of-range 1 dead-ground 2 cover 3 exposed
+export const fetchConf = (cls?: string) => cq('/api/conf', cls)       // intel-confidence the cell is threatened
 
 export const fetchViewshedAt = async (world: WorldCoordinate): Promise<ViewshedResult> => {
   const r = await fetch('/api/viewshed', {

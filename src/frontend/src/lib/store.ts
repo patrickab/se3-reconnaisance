@@ -15,6 +15,7 @@ interface AppState {
   error: string | null
 
   colorMode: ColorMode
+  riskClass: 'dismount' | 'light_veh' | 'armour'   // who's moving — the risk surface to show
   overlayOnRgb: boolean
   layers: Layers
   classVisibility: ClassVisibility
@@ -36,6 +37,7 @@ interface AppState {
   setViewshed: (viewshedInfo: ViewshedInfo) => void
   setError: (error: string) => void
   setColorMode: (colorMode: ColorMode) => void
+  setRiskClass: (riskClass: 'dismount' | 'light_veh' | 'armour') => void
   setOverlayOnRgb: (overlayOnRgb: boolean) => void
   toggleLayer: (key: LayerKey) => void
   toggleClass: (key: BoxClass) => void
@@ -77,6 +79,7 @@ export const useStore = create<AppState>((set) => ({
   error: null,
 
   colorMode: 'rgb',
+  riskClass: 'dismount',
   overlayOnRgb: false,
   layers: { points: true, boxes: true, observer: true, threats: true, viewcones: true },
   classVisibility: DEFAULT_CLASS_VISIBILITY,
@@ -97,12 +100,13 @@ export const useStore = create<AppState>((set) => ({
   setReady: ({ viewshedReady, threatReady, fieldsReady }) => set({ viewshedReady, threatReady, fieldsReady }),
   setViewshed: (viewshedInfo) => set({ viewshedInfo, viewshedReady: true }),
   setError: (error) => set({ error, loading: false }),
-  // Kill (depth) / Danger read best painted onto the real map — default the RGB overlay on
-  // when entering them; the operator can still toggle it off.
+  // Kill (depth) / Danger / Risk read best painted onto the real map — default the RGB overlay
+  // on when entering them; the operator can still toggle it off.
   setColorMode: (colorMode) => set((s) => ({
     colorMode,
-    overlayOnRgb: colorMode === 'danger' || colorMode === 'depth' ? true : s.overlayOnRgb,
+    overlayOnRgb: colorMode === 'danger' || colorMode === 'depth' || colorMode === 'risk' ? true : s.overlayOnRgb,
   })),
+  setRiskClass: (riskClass) => set({ riskClass }),
   setOverlayOnRgb: (overlayOnRgb) => set({ overlayOnRgb }),
   toggleLayer: (key) => set((s) => ({ layers: { ...s.layers, [key]: !s.layers[key] } })),
   toggleClass: (key) => set((s) => ({ classVisibility: { ...s.classVisibility, [key]: !s.classVisibility[key] } })),
