@@ -45,6 +45,7 @@ interface AppState {
   selectThreat: (selectedThreat: ThreatPosition | null, selectedThreatPoint?: ScreenPoint | null) => void
   selectUnit: (id: string | null, cursor?: SceneCursor | null) => void
   setSelectedCursorScreen: (screen: ScreenPoint) => void
+  focusWorld: ((world: [number, number, number]) => void) | null   // set by SceneCanvas → Viewer.focusWorld
   setPlacing: (placing: 'enemy' | 'friendly' | null) => void
   setRemoving: (removing: boolean) => void
   setActiveSide: (side: 'hostile' | 'friendly') => void
@@ -84,6 +85,7 @@ export const useStore = create<AppState>((set) => ({
   layers: { points: true, boxes: true, observer: true, threats: true, viewcones: true },
   classVisibility: DEFAULT_CLASS_VISIBILITY,
   selected: null,
+  focusWorld: null,
   selectedCursor: null,
   selectedThreat: null,
   selectedThreatPoint: null,

@@ -30,6 +30,7 @@ export default function SceneCanvas() {
     const viewer = new Viewer(canvasRef.current)
     viewerRef.current = viewer
     if (import.meta.env.DEV) (window as unknown as { viewer: Viewer }).viewer = viewer
+    useStore.setState({ focusWorld: (w) => viewer.focusWorld(w) })
     viewer.onCursorScreen((screen) => useStore.getState().setSelectedCursorScreen(screen))
     viewer.onPick((b, cursor) => useStore.getState().select(b, cursor ?? null))
     viewer.onPickThreat((p, point) => useStore.getState().selectThreat(p, point ?? null))
@@ -76,6 +77,7 @@ export default function SceneCanvas() {
       disposed = true
       viewer.dispose()
       viewerRef.current = null
+      useStore.setState({ focusWorld: null })
     }
   }, [])
 

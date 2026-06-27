@@ -6,7 +6,6 @@ import { BoxClass, ColorMode } from '../lib/types'
 
 const CLASSES: { key: BoxClass; label: string }[] = [
   { key: 'shelter', label: 'Shelter' },
-  { key: 'house', label: 'House' },
   { key: 'container', label: 'Container' },
   { key: 'wall', label: 'Wall' },
   { key: 'car', label: 'Car' },
@@ -20,8 +19,6 @@ const CLASS_ICON: Record<BoxClass, LucideIcon> = {
 const MODES: { key: ColorMode; label: string; needs?: 'viewshed' | 'threat' | 'fields' }[] = [
   { key: 'rgb', label: 'RGB' },
   { key: 'height', label: 'Height' },
-  { key: 'temperature', label: 'Temp.' },
-  { key: 'viewshed', label: 'LOS', needs: 'viewshed' },
   { key: 'risk', label: 'Risk', needs: 'fields' },
   { key: 'danger', label: 'Danger', needs: 'fields' },
   { key: 'depth', label: 'Kill zone', needs: 'fields' },
@@ -46,7 +43,7 @@ const RISK_LEGEND: { sw: string; label: string }[] = [
 
 export default function Hud() {
   const [collapsed, setCollapsed] = useState(false)
-  const { meta, boxes, colorMode, setColorMode, layers, toggleLayer, classVisibility, toggleClass, viewshedInfo } = useStore()
+  const { meta, boxes, colorMode, setColorMode, layers, toggleLayer, classVisibility, toggleClass } = useStore()
   const overlayOnRgb = useStore((s) => s.overlayOnRgb)
   const setOverlayOnRgb = useStore((s) => s.setOverlayOnRgb)
   const riskClass = useStore((s) => s.riskClass)
@@ -86,20 +83,7 @@ export default function Hud() {
               <Metric k="area" v={`${meta.span[0].toFixed(0)} x ${meta.span[1].toFixed(0)} m`} />
               <Metric k="points" v={meta.n.toLocaleString()} />
               <Metric k="objects" v={boxes.length.toString()} />
-              <Metric k="relief" v={`${meta.span[2].toFixed(1)} m`} />
             </div>
-            {viewshedInfo && (
-              <div className="border border-tactical-border/60 bg-tactical-bg/25 px-3 py-2 font-mono text-[11px] text-tactical-secondary">
-                <div className="flex justify-between gap-3">
-                  <span className="text-tactical-muted">observer</span>
-                  <span className="truncate text-right text-tactical-text">{viewshedInfo.observer_label}</span>
-                </div>
-                <div className="mt-1 flex justify-between gap-3">
-                  <span className="text-tactical-muted">seen points</span>
-                  <span className="text-tactical-warning">{viewshedInfo.pct_points_visible.toFixed(1)}%</span>
-                </div>
-              </div>
-            )}
 
             <div>
               <div className="sr-only">Display mode</div>

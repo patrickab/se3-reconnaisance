@@ -169,6 +169,11 @@ export class Viewer {
   private raf = 0
   private clock = new THREE.Clock()
   private keys = new Set<string>()
+  private focusAnim: {
+    camStart: THREE.Vector3; camEnd: THREE.Vector3
+    tgtStart: THREE.Vector3; tgtEnd: THREE.Vector3
+    t: number; dur: number
+  } | null = null
 
   private points?: THREE.Points
   private meta?: CloudMeta
@@ -247,7 +252,9 @@ export class Viewer {
 
     const loop = () => {
       this.raf = requestAnimationFrame(loop)
-      this.apply(this.clock.getDelta())
+      const dt = this.clock.getDelta()
+      this.apply(dt)
+      this.stepFocus(dt)
       this.controls.update()
       this.emitCursorScreen()
       this.renderer.render(this.scene, this.camera)
@@ -332,6 +339,46 @@ export class Viewer {
     this.controls.update()
     this.resize()
     return { viewshed: true, threat: !!thFlags, fields: !!dgFlags }
+  }
+
+  // locate framing — close oblique "battle view". Tune to taste.
+  private static FOCUS_DIST = 280   // m from the soldier
+  private static FOCUS_PITCH = 38   // deg above the horizon (38 ≈ the oblique 3D look)
+
+  /** Glide the camera to centre a world coord (E,N,U) at a fixed close oblique framing
+   *  (FOCUS_DIST / FOCUS_PITCH), keeping the operator's current heading. Two-phase: the look
+   *  rotates toward the soldier first, then the camera slides in to centre it. */
+  focusWorld(world: [number, number, number]) {
+    if (!this.meta) return
+    const [vx, vy, vz] = w2v(world, this.meta.origin, this.meta.span)
+    const tgtEnd = new THREE.Vector3(vx, vy, vz)
+    const camStart = this.camera.position.clone()
+    const tgtStart = this.controls.target.clone()
+    // keep current heading (azimuth), override distance + pitch for the zoomed oblique view
+    const dirXZ = new THREE.Vector3(camStart.x - tgtStart.x, 0, camStart.z - tgtStart.z)
+    if (dirXZ.lengthSq() < 1e-6) dirXZ.set(0, 0, 1)
+    dirXZ.normalize()
+    const pitch = (Viewer.FOCUS_PITCH * Math.PI) / 180
+    const camEnd = tgtEnd.clone()
+      .addScaledVector(dirXZ, Viewer.FOCUS_DIST * Math.cos(pitch))
+      .add(new THREE.Vector3(0, Viewer.FOCUS_DIST * Math.sin(pitch), 0))
+    this.focusAnim = { camStart, camEnd, tgtStart, tgtEnd, t: 0, dur: 1.35 }
+  }
+
+  // Stepped from the render loop. Target leads (rotation first), camera follows on a delay
+  // (translation second), so the view turns toward the soldier and then slides over to centre it.
+  private stepFocus(dt: number) {
+    const a = this.focusAnim
+    if (!a) return
+    if (this.keys.size) { this.focusAnim = null; return }   // operator took manual control
+    a.t = Math.min(1, a.t + dt / a.dur)
+    const easeOut = (x: number) => 1 - (1 - x) ** 3
+    const easeInOut = (x: number) => (x < 0.5 ? 4 * x ** 3 : 1 - (-2 * x + 2) ** 3 / 2)
+    const rot = easeOut(Math.min(1, a.t / 0.55))            // rotate toward soldier first
+    const mov = easeInOut(Math.max(0, (a.t - 0.35) / 0.65)) // then slide the camera over
+    this.controls.target.lerpVectors(a.tgtStart, a.tgtEnd, rot)
+    this.camera.position.lerpVectors(a.camStart, a.camEnd, mov)
+    if (a.t >= 1) this.focusAnim = null
   }
 
   // Per-point overlay colours (viewshed/threat/danger/depth) from the module-cached
