@@ -97,7 +97,12 @@ export const useStore = create<AppState>((set) => ({
   setReady: ({ viewshedReady, threatReady, fieldsReady }) => set({ viewshedReady, threatReady, fieldsReady }),
   setViewshed: (viewshedInfo) => set({ viewshedInfo, viewshedReady: true }),
   setError: (error) => set({ error, loading: false }),
-  setColorMode: (colorMode) => set({ colorMode }),
+  // Kill (depth) / Danger read best painted onto the real map — default the RGB overlay on
+  // when entering them; the operator can still toggle it off.
+  setColorMode: (colorMode) => set((s) => ({
+    colorMode,
+    overlayOnRgb: colorMode === 'danger' || colorMode === 'depth' ? true : s.overlayOnRgb,
+  })),
   setOverlayOnRgb: (overlayOnRgb) => set({ overlayOnRgb }),
   toggleLayer: (key) => set((s) => ({ layers: { ...s.layers, [key]: !s.layers[key] } })),
   toggleClass: (key) => set((s) => ({ classVisibility: { ...s.classVisibility, [key]: !s.classVisibility[key] } })),

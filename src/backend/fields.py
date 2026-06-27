@@ -12,7 +12,7 @@ observation overlay is built. Design choices (per operator review):
    cover a vehicle (2.5 m) does not. We output both.
 6. RANGE-GRADUATED lethality (p_hit decays past effective range, not a hard edge)
    and per-asset SECTOR OF FIRE (a hull-down tank covers an arc, not 360deg).
-4. Indirect = mortar_range ∩ (observed ∪ pre-planned TRPs on chokepoints) — so an
+4. Indirect = mortar_range AND (observed OR pre-planned TRPs on chokepoints) — so an
    attacker can't "game" the map by hugging dead ground through a registered defile.
 
 Honest limit: the DSM treats tree canopy as a solid occluder, so dead ground behind
@@ -31,16 +31,20 @@ import argparse
 import json
 from pathlib import Path
 import sys
+from typing import TYPE_CHECKING
 
 import numpy as np
 from scipy.ndimage import distance_transform_edt, maximum_filter
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from src.backend.app import MAX_POINTS, VOXEL, pack_cloud  # noqa: E402
-from src.backend.terrain import BUILD, DATA, box_polygon, build_dsm, save_geotiff  # noqa: E402
+from src.backend.app import MAX_POINTS, PACK, VOXEL, pack_cloud, terrain_for  # noqa: E402
+from src.backend.terrain import BUILD, DATA, box_polygon, save_geotiff  # noqa: E402
 from src.backend.units import resolve_unit  # noqa: E402
 from src.backend.visibility import viewshed  # noqa: E402
+
+if TYPE_CHECKING:
+    from affine import Affine
 
 TARGETS = {"dismount": 1.7, "mount": 2.5}  # standing soldier vs vehicle
 
@@ -66,10 +70,35 @@ def p_hit(dist: np.ndarray, eff: float, mx: float) -> np.ndarray:
     return np.clip(np.where(dist <= mx, p, 0.0), 0.0, 1.0)
 
 
+# Per-shooter viewshed cache. A shooter's line-of-sight depends only on its own
+# (position, facing, type) and the fixed DSM at this resolution — so we key on
+# exactly that and reuse the grid across recomputes. Editing one unit then
+# re-sweeps one unit, not the whole laydown. Content-keyed: a moved/reoriented
+# unit yields a new key and misses; old entries are inert, never stale.
+_VIS_CACHE: dict[tuple, np.ndarray] = {}
+_VIS_CAP = 512  # ~0.25 MB/grid; flushed wholesale past the cap (no LRU until churn proves it needed)
+
+
+def _shooter_vis(dsm: np.ndarray, transform: Affine, res: float, e: dict, prof: dict,
+                 target_h: float, target_key: str) -> np.ndarray:
+    """Viewshed for one shooter against one target height, memoised on its content key."""
+    E, N, U = e["world"]
+    key = (round(E, 1), round(N, 1), round(U, 1), e["facing_deg"], e["type"], target_key, res)
+    vis = _VIS_CACHE.get(key)
+    if vis is None:
+        if len(_VIS_CACHE) >= _VIS_CAP:
+            _VIS_CACHE.clear()
+        vis, _, _ = viewshed(dsm, transform, res, (E, N), obs_z=U, eye_h=prof["eye_h"],
+                             target_h=target_h, max_range=prof["mx"], facing_deg=float(e["facing_deg"]),
+                             arc_deg=prof["arc"])
+        _VIS_CACHE[key] = vis
+    return vis
+
+
 def run(side: str = "west", res: float = 2.0) -> dict:
     """Project the enemy laydown into threat fields — callable from CLI and /recompute."""
-    t = build_dsm(DATA / "point_cloud.ply", res, DATA / "bounding_boxes.json")
-    dsm, transform, bounds, (h, w) = t["dsm"], t["transform"], t["bounds"], t["shape"]
+    t = terrain_for(res)  # reuse the API's DSM cache (build_dsm under the hood); free when already warm
+    dsm, transform, (h, w) = t["dsm"], t["transform"], t["shape"]
     threat = json.loads((BUILD / "threat.json").read_text())
     enemies = threat["positions"]
 
@@ -86,14 +115,10 @@ def run(side: str = "west", res: float = 2.0) -> dict:
         if prof["fire"] != "direct":
             continue
         n_direct += 1
-        E, N, U = e["world"]
-        facing = float(e["facing_deg"])   # operator-set heading (viewshed math angle), set by threat_template
-        dist = np.hypot(gx - E, gy - N)
-        pr = p_hit(dist, prof["eff"], prof["mx"])
+        E, N, _U = e["world"]
+        pr = p_hit(np.hypot(gx - E, gy - N), prof["eff"], prof["mx"])  # range-graded P(hit), facing folded into viewshed
         for k, th in TARGETS.items():
-            vis, _, _ = viewshed(dsm, transform, res, (E, N), obs_z=U,
-                                 eye_h=prof["eye_h"], target_h=th, max_range=prof["mx"],
-                                 facing_deg=float(facing), arc_deg=prof["arc"])
+            vis = _shooter_vis(dsm, transform, res, e, prof, th, k)
             depth[k] += vis                                       # +1 per shooter that sees it
             direct[k] = 1.0 - (1.0 - direct[k]) * (1.0 - vis * pr)  # probabilistic union
 
@@ -144,7 +169,8 @@ def run(side: str = "west", res: float = 2.0) -> dict:
     save_geotiff(depth["dismount"].astype("float32"), transform, t["epsg"], BUILD / "fields_depth.tif")
 
     # ---- per-web-point overlays for the viewer ----
-    pack = pack_cloud(DATA / "point_cloud.ply", VOXEL, MAX_POINTS)
+    # reuse the cloud the API already holds in RAM; only re-pack when run standalone (CLI, no lifespan)
+    pack = PACK if PACK.get("meta") else pack_cloud(DATA / "point_cloud.ply", VOXEL, MAX_POINTS)
     meta = pack["meta"]
     ox, oy = meta["origin"][0], meta["origin"][1]
     n = meta["n"]

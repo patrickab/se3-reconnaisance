@@ -112,6 +112,7 @@ export class Viewer {
   private placedUnitPickables: THREE.Object3D[] = []
   private unitById = new Map<string, UnitContact>()
   private selectedUnitId: string | null = null
+  private viewconesVisible = true
   private removeUnitCb: (id: string) => void = () => {}
   private pickPlacedUnitCb: (id: string, cursor: SceneCursor) => void = () => {}
   private pickThreatCb: (p: ThreatPosition | null, point?: { x: number; y: number }) => void = () => {}
@@ -214,6 +215,36 @@ export class Viewer {
     this.colors.rgb = new THREE.BufferAttribute(colRGB, 3)
     this.colors.height = new THREE.BufferAttribute(colHGT, 3)
     this.colRGBArr = colRGB
+    this.buildOverlayColors()
+
+    const geo = new THREE.BufferGeometry()
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+    geo.setAttribute('color', this.colors.rgb)
+    geo.computeBoundingSphere()
+    this.points = new THREE.Points(
+      geo,
+      new THREE.PointsMaterial({ size: 0.82, vertexColors: true, sizeAttenuation: true })
+    )
+    this.scene.add(this.points)
+
+    this.buildBoxes(boxes, meta)
+    if (vs) this.buildObserver(vs, meta)
+    if (threat) this.buildThreat(threat, meta)
+    if (fields) this.buildTRPs(fields, meta)
+
+    const d = Math.max(sx, sy)
+    this.camera.position.set(0, d * 0.55, d * 0.85)
+    this.controls.target.set(0, 0, 0)
+    this.controls.update()
+    this.resize()
+    return { viewshed: true, threat: !!thFlags, fields: !!dgFlags }
+  }
+
+  // Per-point overlay colours (viewshed/threat/danger/depth) from the module-cached
+  // flag buffers. Shared by the initial load() and setThreatFields() so a recompute
+  // re-tints without re-ingesting the 4M-point cloud.
+  private buildOverlayColors() {
+    const n = this.meta!.n
     if (vsFlags) this.colors.viewshed = this.buildViewshedColors(vsFlags)
     if (thFlags) {
       const colTH = new Float32Array(n * 3)
@@ -253,28 +284,22 @@ export class Viewer {
       }
       this.colors.depth = new THREE.BufferAttribute(colDP, 3)
     }
+  }
 
-    const geo = new THREE.BufferGeometry()
-    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3))
-    geo.setAttribute('color', this.colors.rgb)
-    geo.computeBoundingSphere()
-    this.points = new THREE.Points(
-      geo,
-      new THREE.PointsMaterial({ size: 0.82, vertexColors: true, sizeAttenuation: true })
-    )
-    this.scene.add(this.points)
-
-    this.buildBoxes(boxes, meta)
-    if (vs) this.buildObserver(vs, meta)
+  /** Refresh only the threat/danger/depth overlays after a recompute — no cloud
+   *  re-ingest, no doubled geometry. Force-refetches the bins: the module flag
+   *  cache is keyed per page-load, so a recompute must bypass it (this was the
+   *  reason the old flow fell back to a full window.location.reload()). */
+  async setThreatFields(threat: ThreatInfo | null, fields: FieldsInfo | null, meta: CloudMeta) {
+    this.meta = meta
+    thFlags = await fetchThreat()
+    dgFlags = fields ? await fetchDanger() : null
+    dpFlags = fields ? await fetchDepth() : null
+    this.buildOverlayColors()
+    this.clearGroup(this.threatGroup)   // drop old arrow/TRPs before rebuilding (no doubling)
     if (threat) this.buildThreat(threat, meta)
     if (fields) this.buildTRPs(fields, meta)
-
-    const d = Math.max(sx, sy)
-    this.camera.position.set(0, d * 0.55, d * 0.85)
-    this.controls.target.set(0, 0, 0)
-    this.controls.update()
-    this.resize()
-    return { viewshed: true, threat: !!thFlags, fields: !!dgFlags }
+    this.setColorMode(this.colorMode)   // rebind the freshly built buffer to the geometry
   }
 
   setColorMode(mode: ColorMode) {
@@ -330,7 +355,11 @@ export class Viewer {
     // enemy markers now live in placedEnemyGroup (live /api/units); threatGroup holds only
     // the advance-axis arrow. "hide enemy markers" should hide the actual enemy markers.
     if (key === 'threats') { this.placedEnemyGroup.visible = visible; this.threatGroup.visible = visible }
-    if (key === 'viewcones') this.viewconesGroup.visible = visible
+    if (key === 'viewcones') {
+      this.viewconesVisible = visible
+      this.viewconesGroup.visible = visible
+      this.updateSelectedUnitOverlays()
+    }
   }
 
   setClassVisibility(visibility: ClassVisibility) {
@@ -351,9 +380,13 @@ export class Viewer {
   // Reveal a placed unit's full range ring/wedge only while it's selected.
   setSelectedUnit(id: string | null) {
     this.selectedUnitId = id
+    this.updateSelectedUnitOverlays()
+  }
+
+  private updateSelectedUnitOverlays() {
     for (const g of [this.placedEnemyGroup, this.friendlyGroup]) {
       for (const c of g.children) {
-        if (c.userData.selOnly) c.visible = c.userData.unitId === id
+        if (c.userData.selOnly) c.visible = c.userData.unitId === this.selectedUnitId && (!c.userData.viewfield || this.viewconesVisible)
       }
     }
   }
@@ -455,6 +488,7 @@ export class Viewer {
       icon.userData.unitId = unit.id
       icon.userData.side = side
       icon.userData.world = unit.world
+      icon.userData.poleBase = [vx, vy, vz]
       this.placedUnitPickables.push(icon)
       const pole = new THREE.Line(
         new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(vx, vy, vz), new THREE.Vector3(vx, top, vz)]),
@@ -478,9 +512,10 @@ export class Viewer {
       for (const o of ranged) {
         o.userData.unitId = unit.id
         o.userData.selOnly = true
-        o.visible = unit.id === this.selectedUnitId
+        o.userData.viewfield = true
+        o.visible = this.viewconesVisible && unit.id === this.selectedUnitId
       }
-      for (const d of dir) d.userData.side = side
+      for (const d of dir) { d.userData.side = side; d.userData.unitId = unit.id }
       this.viewconesGroup.add(...dir)
       group.add(icon, pole, ring, ...ranged)
     }
@@ -812,16 +847,17 @@ export class Viewer {
 
   private onPlaceMouseDown = (e: MouseEvent) => {
     if (!this.meta || !this.points) return
-    // reorient: drag from an existing icon (only when not in place/remove mode)
+    // reorient: drag from an existing icon or rotation handle (only when not in place/remove mode)
     if (!this.placing && !this.removing) {
       this.raycaster.setFromCamera(this.toNDC(e), this.camera)
-      const iconHit = this.raycaster.intersectObjects(this.placedUnitPickables, false)[0]
+      const iconHit = this.raycaster.intersectObjects(this.placedUnitPickables, true)[0]
       if (iconHit) {
-        const id = iconHit.object.userData.unitId as string
-        const side = iconHit.object.userData.side as 'hostile' | 'friendly'
+        const obj = iconHit.object
+        const id = obj.userData.unitId as string
+        const side = obj.userData.side as 'hostile' | 'friendly'
         const color = side === 'hostile' ? 0xff2b2b : 0x3b82f6
-        const ip = iconHit.object.position
-        this.reorientPin = { unitId: id, vx: ip.x, vy: ip.y - 26, vz: ip.z, color }
+        const [vx, vy, vz] = (obj.userData.poleBase ?? obj.position.toArray()) as [number, number, number]
+        this.reorientPin = { unitId: id, vx, vy: vy, vz, color }
         this.controls.enabled = false
         return
       }
@@ -849,15 +885,16 @@ export class Viewer {
 
   private onPlaceMouseMove = (e: MouseEvent) => {
     if (!(e.buttons & 1)) return
-    // reorient drag: update the cone live while dragging from an icon
+    // reorient drag: update the cone live while dragging from an icon/handle
     if (this.reorientPin && this.meta) {
       const { vx, vy, vz, unitId, color } = this.reorientPin
       const pt = this.groundHit(e, vy)
       if (!pt) return
       const yaw = this.yawFromPinToViewer(vx, vz, pt.x, pt.z)
+      const yawRad = yaw * Math.PI / 180
       // update the icon rotation live
       const icon = this.placedUnitPickables.find((p) => p.userData.unitId === unitId)
-      if (icon) icon.rotation.y = yaw * Math.PI / 180
+      if (icon) icon.rotation.y = yawRad
       // update the view cone live
       for (const c of [...this.viewconesGroup.children]) {
         if (c.userData.unitId === unitId) {
