@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { BrickWall, Car, Container, House, Warehouse, type LucideIcon } from 'lucide-react'
 import { CLASS_COLORS } from '../lib/colors'
 import { useStore } from '../lib/store'
 import { BoxClass, ColorMode } from '../lib/types'
@@ -10,6 +11,11 @@ const CLASSES: { key: BoxClass; label: string }[] = [
   { key: 'wall', label: 'Wall' },
   { key: 'car', label: 'Car' },
 ]
+
+// object-class icons (coloured by CLASS_COLORS) — clearer than a plain swatch in the demo
+const CLASS_ICON: Record<BoxClass, LucideIcon> = {
+  shelter: Warehouse, house: House, container: Container, wall: BrickWall, car: Car,
+}
 
 const MODES: { key: ColorMode; label: string; needs?: 'viewshed' | 'threat' | 'fields' }[] = [
   { key: 'rgb', label: 'RGB' },
@@ -23,7 +29,7 @@ const MODES: { key: ColorMode; label: string; needs?: 'viewshed' | 'threat' | 'f
 
 // "risk to" — which mover's surface to show (per-target-class risk)
 const RISK_TO: { key: 'dismount' | 'light_veh' | 'armour'; label: string }[] = [
-  { key: 'dismount', label: 'Dismount' },
+  { key: 'dismount', label: 'Infantry' },   // display label only; backend class key stays 'dismount'
   { key: 'light_veh', label: 'Light veh' },
   { key: 'armour', label: 'Armour' },
 ]
@@ -135,25 +141,25 @@ export default function Hud() {
               </label>
               {colorMode === 'risk' && (
                 <div className="mt-2">
-                  <div className="mb-1 text-[9px] text-tactical-muted">risk to</div>
-                  <div className="segmented-toggle grid grid-cols-3 font-mono text-[9px] text-tactical-secondary">
+                  <div className="mb-1 text-[10px] uppercase tracking-wide text-tactical-muted">risk to</div>
+                  <div className="segmented-toggle grid grid-cols-3 font-mono text-[11px] text-tactical-secondary">
                     {RISK_TO.map((rc) => (
                       <button key={rc.key} onClick={() => setRiskClass(rc.key)}
-                        className={`min-w-0 truncate px-1 py-1 transition hover:text-tactical-text ${riskClass === rc.key ? 'bg-tactical-accent/15 text-tactical-accent shadow-[inset_0_0_0_1px_rgb(208_168_92_/_0.28)]' : ''}`}
+                        className={`min-w-0 truncate px-1 py-1.5 transition hover:text-tactical-text ${riskClass === rc.key ? 'bg-tactical-accent/15 text-tactical-accent shadow-[inset_0_0_0_1px_rgb(208_168_92_/_0.28)]' : ''}`}
                         aria-pressed={riskClass === rc.key}>{rc.label}</button>
                     ))}
                   </div>
                 </div>
               )}
               {colorMode === 'risk' && (
-                <div className="mt-2 border border-tactical-border/60 bg-tactical-bg/25 px-2.5 py-2 font-mono text-[9px] text-tactical-secondary">
+                <div className="mt-2 border border-tactical-border/60 bg-tactical-bg/25 px-3 py-2.5 font-mono text-[11px] text-tactical-secondary">
                   {RISK_LEGEND.map((r) => (
-                    <div key={r.label} className="flex items-center gap-1.5 py-0.5">
-                      <span className="h-2.5 w-2.5 shrink-0 border border-black/30" style={{ backgroundColor: r.sw }} />
+                    <div key={r.label} className="flex items-center gap-2 py-1">
+                      <span className="h-3 w-3 shrink-0 rounded-[2px] border border-black/30" style={{ backgroundColor: r.sw }} />
                       <span className="truncate">{r.label}</span>
                     </div>
                   ))}
-                  <div className="mt-1 leading-snug text-tactical-muted">dead ground = hidden, not proven safe (vegetation not modelled). faded = low-confidence intel.</div>
+                  <div className="mt-1.5 text-[9px] leading-snug text-tactical-muted">dead ground = hidden, not proven safe (vegetation not modelled). faded = low-confidence intel.</div>
                 </div>
               )}
             </div>
@@ -178,17 +184,18 @@ export default function Hud() {
               <div className="mt-2 grid grid-cols-1 gap-1">
                 {CLASSES.map(({ key, label }) => {
                   const active = classVisibility[key]
+                  const Icon = CLASS_ICON[key]
                   return (
                     <button
                       key={key}
                       onClick={() => toggleClass(key)}
-                      className={`legend-cell flex w-full items-center justify-between gap-2 px-2.5 py-1.5 font-mono text-[11px] transition ${
+                      className={`legend-cell flex w-full items-center justify-between gap-2 px-2.5 py-2 font-mono text-[12px] transition ${
                         active && boxesVisible ? 'text-tactical-text' : 'text-tactical-muted opacity-45'
                       }`}
                       aria-pressed={active}
                     >
-                      <span className="flex min-w-0 items-center gap-1.5">
-                        <span className="h-2.5 w-2.5 shrink-0 border border-black/30" style={{ backgroundColor: hexColor(CLASS_COLORS[key]) }} />
+                      <span className="flex min-w-0 items-center gap-2">
+                        <Icon size={16} strokeWidth={2} className="shrink-0" style={{ color: hexColor(CLASS_COLORS[key]) }} />
                         <span className="truncate">{label}</span>
                       </span>
                       <span className="text-tactical-muted">{counts[key]}</span>
