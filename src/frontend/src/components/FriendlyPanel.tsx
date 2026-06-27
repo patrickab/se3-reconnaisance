@@ -1,4 +1,4 @@
-import { postRecompute } from '../lib/api'
+import { postRecompute, postReset } from '../lib/api'
 import { useStore } from '../lib/store'
 import { ThreatType } from '../lib/types'
 
@@ -15,6 +15,7 @@ export default function FriendlyPanel() {
   const enemies = useStore((s) => s.enemies)
   const friendly = useStore((s) => s.friendly)
   const scanning = useStore((s) => s.scanning)
+  const hasLaydown = useStore((s) => s.threatInfo !== null) // an analysed laydown is on the map
   const setPlacing = useStore((s) => s.setPlacing)
   const setEnemyType = useStore((s) => s.setEnemyType)
   const clearEnemies = useStore((s) => s.clearEnemies)
@@ -26,6 +27,17 @@ export default function FriendlyPanel() {
     try {
       await postRecompute(enemies, friendly)
       window.location.reload() // pull the freshly-projected fields of fire / kill zones
+    } catch {
+      setScanning(false)
+    }
+  }
+
+  // Wipe the analysed laydown so the battlefield goes blank again.
+  const reset = async () => {
+    setScanning(true)
+    try {
+      await postReset()
+      window.location.reload()
     } catch {
       setScanning(false)
     }
@@ -79,6 +91,15 @@ export default function FriendlyPanel() {
       >
         {scanning ? 'analysing… ~15 s' : '▶ analyse threat'}
       </button>
+      {hasLaydown && (
+        <button
+          onClick={reset}
+          disabled={scanning}
+          className="mt-1.5 w-full border border-tactical-border px-2 py-1 text-[11px] text-tactical-secondary hover:text-tactical-text disabled:opacity-40"
+        >
+          ✕ clear battlefield
+        </button>
+      )}
       <div className="mt-1.5 text-[9px] leading-snug text-tactical-muted">
         mark the enemy from your intel (and our own positions), then analyse — fields of fire, kill zones and danger are projected from where they are.
       </div>
