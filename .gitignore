@@ -16,6 +16,8 @@ src/frontend/dist/
 # generated web assets — only .gitkeep is tracked (data comes from the API/build)
 src/frontend/public/*
 !src/frontend/public/.gitkeep
+# unit 3D models are real source assets (loaded by Viewer.ts), keep them tracked
+!src/frontend/public/assets/
 src/frontend/.env.local
 src/frontend/.env*.local
 
