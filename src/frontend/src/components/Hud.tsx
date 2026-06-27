@@ -16,8 +16,26 @@ const MODES: { key: ColorMode; label: string; needs?: 'viewshed' | 'threat' | 'f
   { key: 'height', label: 'Height' },
   { key: 'temperature', label: 'Temp.' },
   { key: 'viewshed', label: 'LOS', needs: 'viewshed' },
+  { key: 'risk', label: 'Risk', needs: 'fields' },
   { key: 'danger', label: 'Danger', needs: 'fields' },
   { key: 'depth', label: 'Kill zone', needs: 'fields' },
+]
+
+// "risk to" — which mover's surface to show (per-target-class risk)
+const RISK_TO: { key: 'dismount' | 'light_veh' | 'armour'; label: string }[] = [
+  { key: 'dismount', label: 'Dismount' },
+  { key: 'light_veh', label: 'Light veh' },
+  { key: 'armour', label: 'Armour' },
+]
+
+// risk-band legend (matches riskBand() in Viewer.ts)
+const RISK_LEGEND: { sw: string; label: string }[] = [
+  { sw: '#d7191c', label: 'No-go / kill zone' },
+  { sw: '#f07c1e', label: 'High' },
+  { sw: '#fdb827', label: 'Moderate' },
+  { sw: '#5b7da0', label: 'Low · behind cover' },
+  { sw: '#74908a', label: 'Low · dead ground (hidden, unverified)' },
+  { sw: '#34854f', label: 'Low · out of range' },
 ]
 
 export default function Hud() {
@@ -25,6 +43,8 @@ export default function Hud() {
   const { meta, boxes, colorMode, setColorMode, layers, toggleLayer, classVisibility, toggleClass, viewshedInfo } = useStore()
   const overlayOnRgb = useStore((s) => s.overlayOnRgb)
   const setOverlayOnRgb = useStore((s) => s.setOverlayOnRgb)
+  const riskClass = useStore((s) => s.riskClass)
+  const setRiskClass = useStore((s) => s.setRiskClass)
   const viewshedReady = useStore((s) => s.viewshedReady)
   const threatReady = useStore((s) => s.threatReady)
   const fieldsReady = useStore((s) => s.fieldsReady)
@@ -113,6 +133,29 @@ export default function Hud() {
                   className="h-3 w-3 accent-tactical-accent"
                 />
               </label>
+              {colorMode === 'risk' && (
+                <div className="mt-2">
+                  <div className="mb-1 text-[9px] text-tactical-muted">risk to</div>
+                  <div className="segmented-toggle grid grid-cols-3 font-mono text-[9px] text-tactical-secondary">
+                    {RISK_TO.map((rc) => (
+                      <button key={rc.key} onClick={() => setRiskClass(rc.key)}
+                        className={`min-w-0 truncate px-1 py-1 transition hover:text-tactical-text ${riskClass === rc.key ? 'bg-tactical-accent/15 text-tactical-accent shadow-[inset_0_0_0_1px_rgb(208_168_92_/_0.28)]' : ''}`}
+                        aria-pressed={riskClass === rc.key}>{rc.label}</button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {colorMode === 'risk' && (
+                <div className="mt-2 border border-tactical-border/60 bg-tactical-bg/25 px-2.5 py-2 font-mono text-[9px] text-tactical-secondary">
+                  {RISK_LEGEND.map((r) => (
+                    <div key={r.label} className="flex items-center gap-1.5 py-0.5">
+                      <span className="h-2.5 w-2.5 shrink-0 border border-black/30" style={{ backgroundColor: r.sw }} />
+                      <span className="truncate">{r.label}</span>
+                    </div>
+                  ))}
+                  <div className="mt-1 leading-snug text-tactical-muted">dead ground = hidden, not proven safe (vegetation not modelled). faded = low-confidence intel.</div>
+                </div>
+              )}
             </div>
 
             <div>

@@ -3,7 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { BoundingBox, ClassVisibility, CloudMeta, ColorMode, FieldsInfo, LayerKey, SceneCursor, ScreenPoint, ThreatInfo, ThreatPosition, UnitContact, UnitProfile, UnitType, ViewshedInfo, WorldCoordinate } from '../lib/types'
 import ms from 'milsymbol'
 import { CLASS_COLORS, TURBO } from '../lib/colors'
-import { fetchCloud, fetchViewshed, fetchThreat, fetchDanger, fetchDepth } from '../lib/api'
+import { fetchCloud, fetchViewshed, fetchThreat, fetchDanger, fetchDepth, fetchReason, fetchConf } from '../lib/api'
 import { v2w, w2v } from '../lib/utils'
 
 // NATO APP-6 / MIL-STD-2525 symbol codes (SIDC). Affiliation: H=hostile, F=friend.
@@ -17,7 +17,11 @@ const SIDC: Record<string, string> = {
   apc:       'SHGPUCI-----',
   assault:   'SHGPUCI-----',
   mortar:    'SHGPUCFM----',
+  at_team:   'SHGPUCIA----',  // infantry anti-armour (RPG/AT4)
+  atgm_team: 'SHGPUCIA----',  // anti-armour guided (Javelin)
   friendly:           'SFGPUCI-----',
+  'friendly.at_team':   'SFGPUCIA----',
+  'friendly.atgm_team': 'SFGPUCIA----',
   'friendly.sniper':  'SFGPUCIS----',
   'friendly.tank':    'SFGPUCA-----',
   'friendly.ifv':     'SFGPUCIZ----',
@@ -51,11 +55,32 @@ let vsFlags: Uint8Array | null = null
 let thFlags: Uint8Array | null = null
 let dgFlags: Uint8Array | null = null
 let dpFlags: Uint8Array | null = null
+let rsFlags: Uint8Array | null = null   // reason: 0 out-of-range 1 dead-ground 2 cover 3 exposed
+let cfFlags: Uint8Array | null = null   // intel-confidence the cell is threatened (0-255)
+// Risk-mode arrays for the currently-selected target class ("risk to" toggle). Default = the
+// dismount arrays above; re-fetched per class on setRiskClass so danger/depth analyst modes stay put.
+let rkD: Uint8Array | null = null
+let rkK: Uint8Array | null = null
+let rkR: Uint8Array | null = null
+let rkC: Uint8Array | null = null
 
 // engagement-area depth palette: 0 dead · 1 single · 2 cross-fire · 3+ kill zone
 const DEPTH_PAL: [number, number, number][] = [
   [0.1, 0.11, 0.13], [0.9, 0.82, 0.27], [0.96, 0.59, 0.16], [0.92, 0.27, 0.16], [0.78, 0.12, 0.24], [0.66, 0.04, 0.35],
 ]
+
+// RISK bands — a soldier-readable decomposition, thresholds tied to p_hit (danger byte D) and
+// engagement depth K. Green is split by WHY it's safe (the canopy=concealment caveat). Returns
+// sRGB colour + a base over-RGB alpha + whether it's a threat band (faded by intel confidence).
+type RiskBand = { c: [number, number, number]; a: number; threat: boolean }
+function riskBand(D: number, K: number, reason: number): RiskBand {
+  if (K >= 2 || D >= 204) return { c: [0.84, 0.10, 0.11], a: 0.85, threat: true }   // NO-GO / kill zone
+  if (D >= 128)           return { c: [0.94, 0.49, 0.12], a: 0.70, threat: true }   // HIGH  (p_hit≥0.5)
+  if (D >= 51 || K >= 1)  return { c: [0.99, 0.72, 0.15], a: 0.55, threat: true }   // MODERATE (seen / p_hit≥0.2)
+  if (reason === 2)       return { c: [0.36, 0.49, 0.63], a: 0.32, threat: false }  // LOW · behind cover (box)
+  if (reason === 1)       return { c: [0.45, 0.55, 0.49], a: 0.24, threat: false }  // LOW · dead ground (hidden, unverified)
+  return                         { c: [0.20, 0.52, 0.38], a: 0.20, threat: false }  // LOW · out of range
+}
 
 // Doctrinal catalog fetched from /api/unit-profiles (backend units.UNIT_CATALOG).
 // Used only for the drag-preview envelope shown between placement and the
@@ -175,6 +200,8 @@ export class Viewer {
     if (threat && !thFlags) thFlags = await fetchThreat()
     if (fields && !dgFlags) dgFlags = await fetchDanger()
     if (fields && !dpFlags) dpFlags = await fetchDepth()
+    if (fields && !rsFlags) rsFlags = await fetchReason()
+    if (fields && !cfFlags) cfFlags = await fetchConf()
 
     const { n } = meta
     const pos = new Float32Array(cloudBuf, 0, n * 3)
@@ -284,6 +311,8 @@ export class Viewer {
       }
       this.colors.depth = new THREE.BufferAttribute(colDP, 3)
     }
+    rkD = dgFlags; rkK = dpFlags; rkR = rsFlags; rkC = cfFlags   // risk class defaults to dismount
+    this.buildRiskColors()
   }
 
   /** Refresh only the threat/danger/depth overlays after a recompute — no cloud
@@ -295,6 +324,8 @@ export class Viewer {
     thFlags = await fetchThreat()
     dgFlags = fields ? await fetchDanger() : null
     dpFlags = fields ? await fetchDepth() : null
+    rsFlags = fields ? await fetchReason() : null   // refresh the risk surface on auto-project too
+    cfFlags = fields ? await fetchConf() : null
     this.buildOverlayColors()
     this.clearGroup(this.threatGroup)   // drop old arrow/TRPs before rebuilding (no doubling)
     if (threat) this.buildThreat(threat, meta)
@@ -313,6 +344,33 @@ export class Viewer {
     this.updateBoxColors()
   }
 
+  // Build the (non-blended) RISK colour attribute from the current target-class arrays:
+  // danger+depth → band, reason → why-safe, confidence → fades the threat bands.
+  private buildRiskColors() {
+    if (!rkD || !rkK || !rkR) return
+    const n = rkD.length
+    const col = new Float32Array(n * 3)
+    for (let i = 0; i < n; i++) {
+      const { c, threat } = riskBand(rkD[i], rkK[i], rkR[i])
+      const f = threat ? 0.35 + 0.65 * ((rkC ? rkC[i] : 255) / 255) : 1
+      col[i * 3] = srgb2lin(c[0] * f)
+      col[i * 3 + 1] = srgb2lin(c[1] * f)
+      col[i * 3 + 2] = srgb2lin(c[2] * f)
+    }
+    this.colors.risk = new THREE.BufferAttribute(col, 3)
+  }
+
+  /** "Risk to" toggle: re-fetch the per-class risk bins and repaint, leaving the analyst
+   *  danger/depth modes (dismount) untouched. */
+  async setRiskClass(cls: 'dismount' | 'light_veh' | 'armour') {
+    const q = cls === 'dismount' ? undefined : cls
+    const [d, k, r, c] = await Promise.all([fetchDanger(q), fetchDepth(q), fetchReason(q), fetchConf(q)])
+    if (!d || !k || !r) return
+    rkD = d; rkK = k; rkR = r; rkC = c
+    this.buildRiskColors()
+    if (this.colorMode === 'risk') this.setColorMode('risk')
+  }
+
   setOverlayOnRgb(on: boolean) {
     this.overlayOnRgb = on
     this.setColorMode(this.colorMode)
@@ -325,6 +383,21 @@ export class Viewer {
   private blendedOverlay(mode: ColorMode): THREE.BufferAttribute | null {
     const flags = mode === 'viewshed' ? vsFlags : mode === 'threat' ? thFlags
       : mode === 'danger' ? dgFlags : mode === 'depth' ? dpFlags : null
+    // risk reads several arrays (for the selected target class), not one — handle it first
+    if (mode === 'risk' && rkD && rkK && rkR && this.colRGBArr) {
+      const base = this.colRGBArr
+      const n = base.length / 3
+      if (!this.blendBuf) this.blendBuf = new Float32Array(n * 3)
+      const out = this.blendBuf
+      for (let i = 0; i < n; i++) {
+        const { c, a: aBase, threat } = riskBand(rkD[i], rkK[i], rkR[i])
+        const a = threat ? aBase * (0.4 + 0.6 * ((rkC ? rkC[i] : 255) / 255)) : aBase
+        out[i * 3] = base[i * 3] * (1 - a) + srgb2lin(c[0]) * a
+        out[i * 3 + 1] = base[i * 3 + 1] * (1 - a) + srgb2lin(c[1]) * a
+        out[i * 3 + 2] = base[i * 3 + 2] * (1 - a) + srgb2lin(c[2]) * a
+      }
+      return new THREE.BufferAttribute(out, 3)
+    }
     if (!flags || !this.colRGBArr) return null
     const base = this.colRGBArr
     const n = base.length / 3
