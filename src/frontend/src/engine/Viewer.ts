@@ -1,9 +1,32 @@
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { BoundingBox, ClassVisibility, CloudMeta, ColorMode, FieldsInfo, LayerKey, SceneCursor, ScreenPoint, ThreatInfo, ThreatPosition, ViewshedInfo, WorldCoordinate } from '../lib/types'
+import ms from 'milsymbol'
 import { CLASS_COLORS, TURBO } from '../lib/colors'
 import { fetchCloud, fetchViewshed, fetchThreat, fetchDanger, fetchDepth } from '../lib/api'
 import { v2w, w2v } from '../lib/utils'
+
+// NATO APP-6 / MIL-STD-2525 symbol codes (SIDC). Affiliation: H=hostile (red diamond),
+// F=friend (blue rectangle). Function: UCIS=sniper, UCA=armour, UCFM=mortar, UCI=infantry.
+const SIDC: Record<string, string> = {
+  sniper_op: 'SHGPUCIS----',
+  tank: 'SHGPUCA-----',
+  mortar: 'SHGPUCFM----',
+  friendly: 'SFGPUCI-----',
+}
+// one CanvasTexture per SIDC, reused across markers
+const symTex = new Map<string, THREE.Texture>()
+function symbolTexture(sidc: string): THREE.Texture {
+  let tex = symTex.get(sidc)
+  if (!tex) {
+    const canvas = new ms.Symbol(sidc, { size: 30 }).asCanvas()
+    tex = new THREE.CanvasTexture(canvas)
+    tex.colorSpace = THREE.SRGBColorSpace
+    tex.userData.aspect = canvas.width / canvas.height
+    symTex.set(sidc, tex)
+  }
+  return tex
+}
 
 // Module-level cache: the 54 MB cloud is fetched at most once per page load,
 // surviving React StrictMode double-mounts and component remounts.
@@ -46,7 +69,7 @@ export class Viewer {
   private threatGroup = new THREE.Group()
   private friendlyGroup = new THREE.Group()
   private placedEnemyGroup = new THREE.Group()
-  private threatPickables: THREE.Mesh[] = []
+  private threatPickables: THREE.Object3D[] = []
   private pickCb: (box: BoundingBox | null, cursor?: SceneCursor) => void = () => {}
   private placing: 'enemy' | 'friendly' | null = null
   private placeCb: (e: number, n: number, u: number) => void = () => {}
@@ -326,10 +349,7 @@ export class Viewer {
     for (const en of enemies) {
       const [vx, vy, vz] = w2v([en.e, en.n, en.u], this.meta.origin, this.meta.span)
       const top = vy + 26
-      const geo = en.type === 'sniper_op' ? new THREE.OctahedronGeometry(9)
-        : en.type === 'mortar' ? new THREE.CylinderGeometry(7, 7, 12, 18)
-        : new THREE.BoxGeometry(16, 9, 20)
-      const icon = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: ENEMY }))
+      const icon = this.symbolSprite(SIDC[en.type] ?? SIDC.sniper_op, 30)
       icon.position.set(vx, top, vz)
       const pole = new THREE.Line(
         new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(vx, vy, vz), new THREE.Vector3(vx, top, vz)]),
@@ -357,7 +377,8 @@ export class Viewer {
   private clearGroup(g: THREE.Group) {
     for (const c of [...g.children]) {
       g.remove(c)
-      ;(c as THREE.Mesh).geometry?.dispose?.()
+      // sprites share one module-level geometry — disposing it would churn every other sprite
+      if (!(c as THREE.Sprite).isSprite) (c as THREE.Mesh).geometry?.dispose?.()
       const m = (c as THREE.Mesh).material as THREE.Material | undefined
       m?.dispose?.()
     }
@@ -440,6 +461,16 @@ export class Viewer {
 
   // A prominent friendly-troop marker (raised blue pole + cone icon + ground ring),
   // matching the enemy markers so our disposition is just as visible from the top.
+  /** A billboarded NATO/APP-6 unit symbol — always faces the camera, always drawn on top. */
+  private symbolSprite(sidc: string, worldH = 28): THREE.Sprite {
+    const tex = symbolTexture(sidc)
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true }))
+    const aspect = (tex.userData.aspect as number) ?? 1
+    sprite.scale.set(worldH * aspect, worldH, 1)
+    sprite.renderOrder = 6
+    return sprite
+  }
+
   private friendlyMarker(E: number, N: number, U: number, meta: CloudMeta): THREE.Object3D[] {
     const FRIEND = 0x3b82f6
     const [vx, vy, vz] = w2v([E, N, U], meta.origin, meta.span)
@@ -448,9 +479,8 @@ export class Viewer {
       new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(vx, vy, vz), new THREE.Vector3(vx, top, vz)]),
       new THREE.LineBasicMaterial({ color: FRIEND })
     )
-    const icon = new THREE.Mesh(new THREE.ConeGeometry(7, 16, 4), new THREE.MeshBasicMaterial({ color: FRIEND }))
+    const icon = this.symbolSprite(SIDC.friendly, 26)
     icon.position.set(vx, top, vz)
-    icon.rotation.y = Math.PI / 4
     const ring = this.decal(new THREE.Mesh(
       new THREE.RingGeometry(6, 9, 24),
       new THREE.MeshBasicMaterial({ color: FRIEND, opacity: 0.85, side: THREE.DoubleSide })
@@ -475,11 +505,7 @@ export class Viewer {
         new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(vx, vy, vz), new THREE.Vector3(vx, top, vz)]),
         new THREE.LineBasicMaterial({ color: ENEMY })
       )
-      const geo =
-        p.type === 'sniper_op' ? new THREE.OctahedronGeometry(9)
-        : p.type === 'mortar' ? new THREE.CylinderGeometry(7, 7, 12, 18)
-        : new THREE.BoxGeometry(16, 9, 20)
-      const icon = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: ENEMY }))
+      const icon = this.symbolSprite(SIDC[p.type] ?? SIDC.sniper_op, 32)
       icon.position.set(vx, top, vz)
       icon.userData.threat = p
       this.threatGroup.add(ring, pole, icon)
