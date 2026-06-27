@@ -268,11 +268,45 @@ def run(side: str = "west", res: float = 2.0) -> dict:
         }
 
     dismount = _class_stats("dismount")
+
+    # ---- per-soldier exposure: classify each placed friendly (the laydown's avenue points) into a
+    #      risk zone on the dismount surface, so the UI can warn "this soldier is in danger" the
+    #      instant a newly-spotted enemy puts them at risk (bands match riskBand() in the frontend) ----
+    cost_d, depth_d, reason_d = costs["dismount"], depth["dismount"], reasons["dismount"]
+
+    def _zone(d: int, k: int) -> str:
+        if k >= 2 or d >= 204:    # mutually-supporting fire / near-certain hit
+            return "kill_zone"
+        if d >= 128:              # p_hit >= 0.5
+            return "high"
+        if d >= 51 or k >= 1:     # p_hit >= 0.2, or seen at all
+            return "moderate"
+        return "low"
+
+    soldiers = []
+    for fp in threat.get("avenue", []):
+        e_m, n_m = float(fp[0]), float(fp[1])
+        col = int((e_m - transform.c) / transform.a)               # floor — matches the per-point sampling
+        row = int((transform.f - n_m) / (-transform.e))
+        if not (0 <= row < h and 0 <= col < w):
+            continue
+        # worst case in a small window around the soldier (a soldier isn't a point, and it makes the
+        # warning conservative + robust to single-cell gaps in a sparse exposed surface)
+        r0, r1, c0, c1 = max(0, row - 1), min(h, row + 2), max(0, col - 1), min(w, col + 2)
+        dval = int(round(float(cost_d[r0:r1, c0:c1].max()) * 255))
+        kval = int(depth_d[r0:r1, c0:c1].max())
+        soldiers.append({
+            "world": [round(e_m, 1), round(n_m, 1), round(float(fp[2]) if len(fp) > 2 else 0.0, 1)],
+            "zone": _zone(dval, kval), "danger": dval, "depth": kval,
+            "exposed": bool((reason_d[r0:r1, c0:c1] == 3).any()),
+        })
+
     info = {
         "side": side,
         "n_direct_shooters": n_direct,
         "classes": CLASSES,
         "trps": trps,
+        "soldiers": soldiers,   # placed friendlies + their current risk zone (drives the danger banner)
         # top-level mirrors the dismount class (the default risk view / current frontend reads these)
         "max_engagement_depth": dismount["max_engagement_depth"],
         "pct_in_kill_zone": dismount["pct_in_kill_zone"],
