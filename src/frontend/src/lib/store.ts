@@ -1,5 +1,6 @@
 import { create } from 'zustand'
-import { BoundingBox, BoxClass, ClassVisibility, CloudMeta, ColorMode, FieldsInfo, LayerKey, Layers, PlacedEnemy, SceneCursor, ScreenPoint, ThreatInfo, ThreatPosition, ThreatType, ViewshedInfo } from './types'
+import * as api from './api'
+import { BoundingBox, BoxClass, ClassVisibility, CloudMeta, ColorMode, FieldsInfo, LayerKey, Layers, PlaceUnitRequest, SceneCursor, ScreenPoint, ThreatInfo, ThreatPosition, UnitContact, UnitProfile, UnitType, ViewshedInfo } from './types'
 
 interface AppState {
   meta: CloudMeta | null
@@ -21,10 +22,13 @@ interface AppState {
   selectedCursor: SceneCursor | null
   selectedThreat: ThreatPosition | null
   selectedThreatPoint: ScreenPoint | null
+  selectedUnitId: string | null
   placing: 'enemy' | 'friendly' | null
-  enemyType: ThreatType
-  enemies: PlacedEnemy[]
-  friendly: [number, number, number][]
+  removing: boolean
+  activeSide: 'hostile' | 'friendly'
+  activeUnitType: UnitType
+  units: UnitContact[]
+  unitProfiles: UnitProfile[]
   scanning: boolean
 
   setData: (d: { meta: CloudMeta; boxes: BoundingBox[]; viewshedInfo: ViewshedInfo | null; threatInfo: ThreatInfo | null; fieldsInfo: FieldsInfo | null }) => void
@@ -37,13 +41,17 @@ interface AppState {
   toggleClass: (key: BoxClass) => void
   select: (selected: BoundingBox | null, selectedCursor?: SceneCursor | null) => void
   selectThreat: (selectedThreat: ThreatPosition | null, selectedThreatPoint?: ScreenPoint | null) => void
+  selectUnit: (id: string | null, cursor?: SceneCursor | null) => void
   setSelectedCursorScreen: (screen: ScreenPoint) => void
   setPlacing: (placing: 'enemy' | 'friendly' | null) => void
-  setEnemyType: (t: ThreatType) => void
-  addEnemy: (e: number, n: number, u: number) => void
-  clearEnemies: () => void
-  addFriendly: (e: number, n: number, u: number) => void
-  clearFriendly: () => void
+  setRemoving: (removing: boolean) => void
+  setActiveSide: (side: 'hostile' | 'friendly') => void
+  setActiveUnitType: (t: UnitType) => void
+  setUnits: (units: UnitContact[]) => void
+  setUnitProfiles: (profiles: UnitProfile[]) => void
+  placeUnit: (req: PlaceUnitRequest) => Promise<void>
+  removeUnit: (id: string) => Promise<void>
+  clearUnits: (side: 'hostile' | 'friendly') => Promise<void>
   setScanning: (scanning: boolean) => void
 }
 
@@ -75,10 +83,13 @@ export const useStore = create<AppState>((set) => ({
   selectedCursor: null,
   selectedThreat: null,
   selectedThreatPoint: null,
+  selectedUnitId: null,
   placing: null,
-  enemyType: 'sniper_op',
-  enemies: [],
-  friendly: [],
+  removing: false,
+  activeSide: 'hostile',
+  activeUnitType: 'sniper',
+  units: [],
+  unitProfiles: [],
   scanning: false,
 
   setData: (d) => set({ ...d, loading: false, error: null }),
@@ -89,16 +100,36 @@ export const useStore = create<AppState>((set) => ({
   setOverlayOnRgb: (overlayOnRgb) => set({ overlayOnRgb }),
   toggleLayer: (key) => set((s) => ({ layers: { ...s.layers, [key]: !s.layers[key] } })),
   toggleClass: (key) => set((s) => ({ classVisibility: { ...s.classVisibility, [key]: !s.classVisibility[key] } })),
-  select: (selected, selectedCursor = null) => set({ selected, selectedCursor, selectedThreat: null }),
-  selectThreat: (selectedThreat, selectedThreatPoint = null) => set({ selectedThreat, selectedThreatPoint, selected: null, selectedCursor: null }),
+  select: (selected, selectedCursor = null) => set({ selected, selectedCursor, selectedThreat: null, selectedUnitId: null }),
+  selectThreat: (selectedThreat, selectedThreatPoint = null) => set({ selectedThreat, selectedThreatPoint, selected: null, selectedCursor: null, selectedUnitId: null }),
+  selectUnit: (selectedUnitId, cursor = null) => set({ selectedUnitId, selectedCursor: cursor, selected: null, selectedThreat: null }),
   setSelectedCursorScreen: (screen) => set((s) => (
     s.selectedCursor ? { selectedCursor: { ...s.selectedCursor, screen } } : {}
   )),
   setPlacing: (placing) => set({ placing }),
-  setEnemyType: (enemyType) => set({ enemyType }),
-  addEnemy: (e, n, u) => set((s) => ({ enemies: [...s.enemies, { e, n, u, type: s.enemyType }] })),
-  clearEnemies: () => set({ enemies: [] }),
-  addFriendly: (e, n, u) => set((s) => ({ friendly: [...s.friendly, [e, n, u]] })),
-  clearFriendly: () => set({ friendly: [] }),
+  setRemoving: (removing) => set({ removing }),
+  setActiveSide: (activeSide) => set({ activeSide }),
+  setActiveUnitType: (activeUnitType) => set({ activeUnitType }),
+  setUnits: (units) => set({ units }),
+  setUnitProfiles: (unitProfiles) => set({ unitProfiles }),
+
+  placeUnit: async (req) => {
+    const unit = await api.postUnit(req)
+    set((s) => ({ units: [...s.units, unit] }))
+  },
+
+  removeUnit: async (id) => {
+    await api.deleteUnit(id)
+    set((s) => ({
+      units: s.units.filter((u) => u.id !== id),
+      selectedUnitId: s.selectedUnitId === id ? null : s.selectedUnitId,
+    }))
+  },
+
+  clearUnits: async (side) => {
+    await api.clearUnits(side)
+    set((s) => ({ units: s.units.filter((u) => u.side !== side) }))
+  },
+
   setScanning: (scanning) => set({ scanning }),
 }))

@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 
 from src.backend.io import read_ply
 from src.backend.terrain import build_dsm
+from src.backend.units import PlaceUnitRequest, UnitContact, resolve_unit, unit_profiles
 from src.backend.visibility import viewshed
 
 if TYPE_CHECKING:
@@ -40,6 +41,7 @@ MAX_POINTS = CONFIG["cloud"]["max_points"]  # cap on served points
 
 PACK: dict = {}  # {"bin": bytes, "meta": {...}} filled on startup
 TERRAIN: dict[float, dict] = {}
+UNITS: dict[str, UnitContact] = {}  # in-memory contact store; resets on server restart
 
 
 class ViewshedRequest(BaseModel):
@@ -253,30 +255,95 @@ def fields_info() -> Response:
     return FileResponse(f, media_type="application/json")
 
 
+# ---- unit contact store -------------------------------------------------------
+
+@app.get("/api/units")
+def list_units(side: str | None = None) -> list[UnitContact]:
+    units = list(UNITS.values())
+    if side:
+        units = [u for u in units if u.side.value == side]
+    return units
+
+
+@app.get("/api/unit-profiles")
+def unit_profiles_endpoint() -> list[dict]:
+    """Doctrinal catalog as lightweight profile dicts — the frontend's single
+    source of truth for per-type range/arc/label (drag-preview rings, popups).
+    No placement state; pure type definitions."""
+    return unit_profiles()
+
+
+@app.post("/api/units")
+def place_unit(req: PlaceUnitRequest) -> UnitContact:
+    # unit_type is a pydantic-validated UnitType enum, so the catalog lookup always hits.
+    contact = resolve_unit(req.unit_type.value).new_contact(req)
+    UNITS[contact.id] = contact
+    return contact
+
+
+@app.delete("/api/units/{unit_id}")
+def delete_unit(unit_id: str) -> dict:
+    UNITS.pop(unit_id, None)
+    return {"ok": True}
+
+
+@app.delete("/api/units")
+def clear_units(side: str | None = None) -> dict:
+    if side:
+        to_remove = [k for k, v in UNITS.items() if v.side.value == side]
+        for k in to_remove:
+            del UNITS[k]
+    else:
+        UNITS.clear()
+    return {"ok": True}
+
+
+# ---- threat recompute ---------------------------------------------------------
+
 class PlacedEnemy(BaseModel):
     e: float
     n: float
     u: float
-    type: str = "sniper_op"  # sniper_op | tank | mortar
+    type: str = "sniper_op"  # sniper_op | tank | mortar (legacy; new flow uses /api/units)
 
 
 class RecomputeReq(BaseModel):
-    enemies: list[PlacedEnemy] = []         # operator-placed enemy positions (intel)
-    friendly: list[list[float]] = []        # our own positions [[E, N, U], ...] (optional)
+    enemies: list[PlacedEnemy] | None = None   # explicit override; omit to use /api/units store
+    friendly: list[list[float]] | None = None
 
 
 @app.post("/api/threat/recompute")
-def recompute(req: RecomputeReq) -> dict:
+def recompute(req: RecomputeReq | None = None) -> dict:
     """Build the enemy laydown from operator-placed positions, then project the
-    fires/observation fields (kill zones, danger). Lazy import breaks the
-    app<->threat_template cycle. Returns counts for the UI."""
+    fires/observation fields (kill zones, danger). Reads from the /api/units store
+    unless an explicit payload overrides it. Returns counts for the UI."""
     from src.backend import fields, threat_template  # noqa: PLC0415
 
-    enemies = [e.model_dump() for e in req.enemies]
-    friendly = [(float(p[0]), float(p[1]), float(p[2])) for p in req.friendly] or None
-    threat_template.from_manual(enemies, friendly)
+    # resolve enemies: explicit body > UNITS store
+    if req and req.enemies is not None:
+        enemies = [e.model_dump() for e in req.enemies]
+    else:
+        enemies = [
+            {"e": u.world[0], "n": u.world[1], "u": u.world[2],
+             # sniper_op is the legacy key threat_template expects; map sniper → sniper_op
+             "type": "sniper_op" if u.unit_type.value == "sniper" else u.unit_type.value}
+            for u in UNITS.values() if u.side.value == "hostile"
+        ]
+
+    if req and req.friendly is not None:
+        friendly_pts: list[tuple[float, float, float]] | None = [
+            (float(p[0]), float(p[1]), float(p[2])) for p in req.friendly
+        ] or None
+    else:
+        friendly_pts = [
+            (u.world[0], u.world[1], u.world[2])
+            for u in UNITS.values() if u.side.value == "friendly"
+        ] or None
+
+    threat_template.from_manual(enemies, friendly_pts)
     fields.run()
-    return {"ok": True, "n_enemies": len(enemies), "n_friendly": len(req.friendly)}
+    n_friendly = len(friendly_pts) if friendly_pts else 0
+    return {"ok": True, "n_enemies": len(enemies), "n_friendly": n_friendly}
 
 
 @app.post("/api/threat/reset")

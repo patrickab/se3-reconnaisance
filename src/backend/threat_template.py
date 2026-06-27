@@ -22,17 +22,15 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from src.backend.io import read_ply  # noqa: E402
 from src.backend.terrain import BUILD, DATA  # noqa: E402
-
-# per-type sector of fire (deg) and tactical role
-ARC = {"sniper_op": 200, "tank": 110, "mortar": 0}
-ROLE = {"sniper_op": "observer", "tank": "anti_armor", "mortar": "indirect"}
+from src.backend.units import resolve_unit  # noqa: E402
 
 
 def from_manual(enemies: list[dict], friendly: list[tuple[float, float, float]] | None = None) -> dict:
-    """enemies: [{e,n,u,type}] (type ∈ sniper_op|tank|mortar). friendly: [[E,N,U]] (optional).
+    """enemies: [{e,n,u,type}] (type ∈ sniper_op|tank|mortar|...). friendly: [[E,N,U]] (optional).
 
     Writes build/threat.json — the laydown fields.py projects. Direct-fire shooters are
-    oriented onto our positions if given, else toward the scene centre.
+    oriented onto our positions if given, else toward the scene centre. Per-type arc
+    and role come from the unit catalog (single source of truth, units.py).
     """
     v = read_ply(DATA / "point_cloud.ply")
     x, y = np.asarray(v["x"]), np.asarray(v["y"])
@@ -45,11 +43,14 @@ def from_manual(enemies: list[dict], friendly: list[tuple[float, float, float]] 
     positions = []
     for i, en in enumerate(enemies):
         E, N, U, typ = float(en["e"]), float(en["n"]), float(en["u"]), str(en["type"])
-        facing = 0.0 if typ == "mortar" else float(math.degrees(math.atan2(fy - N, fx - E)))
+        unit = resolve_unit(typ)
+        role = unit.role.value if unit else "observer"
+        arc = unit.obs_arc if unit else 0
+        facing = 0.0 if role == "indirect" else float(math.degrees(math.atan2(fy - N, fx - E)))
         positions.append({
-            "id": f"red_{i}", "role": ROLE.get(typ, "observer"), "type": typ,
+            "id": f"red_{i}", "role": role, "type": typ,
             "world": [round(E, 1), round(N, 1), round(U, 1)],
-            "facing_deg": round(facing, 0), "arc_deg": ARC.get(typ, 0),
+            "facing_deg": round(facing, 0), "arc_deg": arc,
             "score": 1.0, "sees_pct_of_approach": 0, "cover_dist_m": 0,
             "height_above_ground_m": 0, "thermal_cue": 0, "defilade_m": 0,
         })

@@ -36,12 +36,60 @@ export interface ViewshedInfo {
 export type ThreatRole = 'observer' | 'anti_armor' | 'indirect'
 export type ThreatType = 'sniper_op' | 'tank' | 'mortar'
 
-// an enemy the operator has placed on the map (before analysis)
-export interface PlacedEnemy {
-  e: number
-  n: number
-  u: number
-  type: ThreatType
+// ---- unified unit contact model (mirrors src/backend/units.py) ---------------
+
+export type UnitSide        = 'friendly' | 'hostile' | 'unknown'
+export type UnitWeightClass = 'heavy' | 'medium' | 'light'
+export type UnitType        = 'tank' | 'ifv' | 'apc' | 'assault' | 'sniper' | 'mortar'
+export type UnitFireKind    = 'direct' | 'indirect' | 'observer'
+export type UnitSource      = 'visual' | 'thermal' | 'reported' | 'sigint' | 'templated'
+
+/**
+ * Doctrinal type definition (no placement/intel fields). Mirror of the backend's
+ * `Unit.to_profile()` served at `GET /api/unit-profiles`. This is the frontend's
+ * ONLY source of per-type range/arc/label — the drag-preview rings and popups
+ * read from here, never from a hand-maintained duplicate.
+ */
+export interface UnitProfile {
+  unit_type:    UnitType
+  label:        string
+  weight_class: UnitWeightClass
+  role:         ThreatRole
+  fire_kind:    UnitFireKind
+  obs_arc:      number            // sector of observation, degrees
+  eff_range_m:  number           // effective observation / engagement range, m
+  max_range_m:  number           // maximum effective range, m
+  height_agl_m: number           // sensor/eye height above local terrain
+}
+
+export interface UnitContact {
+  id:                string
+  side:              UnitSide
+  weight_class:      UnitWeightClass
+  unit_type:         UnitType
+  label:             string
+  role:              ThreatRole
+  fire_kind:         UnitFireKind
+  world:             [number, number, number]   // UTM (E, N, elevation_m)
+  confidence:        number
+  sec_since_contact: number
+  source:            UnitSource
+  azimuth:           number | null
+  obs_arc:           number
+  eff_range_m:       number
+  max_range_m:       number
+  height_agl_m:      number
+  velocity:          [number, number] | null
+}
+
+export interface PlaceUnitRequest {
+  side:       UnitSide
+  unit_type:  UnitType
+  world:      [number, number, number]
+  azimuth:    number | null
+  velocity:   [number, number] | null
+  confidence?: number
+  source?:    UnitSource
 }
 
 export interface ThreatPosition {

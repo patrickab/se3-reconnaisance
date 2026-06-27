@@ -39,16 +39,25 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from src.backend.app import MAX_POINTS, VOXEL, pack_cloud  # noqa: E402
 from src.backend.terrain import BUILD, DATA, box_polygon, build_dsm, save_geotiff  # noqa: E402
+from src.backend.units import resolve_unit  # noqa: E402
 from src.backend.visibility import viewshed  # noqa: E402
 
-# Per-asset profiles (THREAT_LIBRARY). eye_h = sensor height above its footing;
-# eff/mx = effective / max range (m); arc = sector of fire (deg, oriented to the AA).
-PROFILES = {
-    "sniper_op": {"fire": "direct", "eye_h": 1.7, "eff": 800, "mx": 1300, "arc": 200},
-    "tank": {"fire": "direct", "eye_h": 2.5, "eff": 1800, "mx": 2500, "arc": 100},
-    "mortar": {"fire": "indirect", "mx": 7000},
-}
 TARGETS = {"dismount": 1.7, "mount": 2.5}  # standing soldier vs vehicle
+
+
+def _profile(typ: str) -> dict:
+    """Resolve a threat-template type key to the fields.py projection profile.
+
+    Single source of truth is units.UNIT_CATALOG; this helper just reshapes it
+    into the (fire/eye_h/eff/mx/arc) dict the projection loop below reads.
+    """
+    u = resolve_unit(typ)
+    if u is None:
+        raise KeyError(f"unknown enemy type in threat laydown: {typ!r}")
+    return {
+        "fire": u.fire_kind.value, "eye_h": u.height_agl_m,
+        "eff": u.eff_range_m, "mx": u.max_range_m, "arc": u.obs_arc,
+    }
 
 
 def p_hit(dist: np.ndarray, eff: float, mx: float) -> np.ndarray:
@@ -75,7 +84,7 @@ def run(side: str = "west", res: float = 2.0) -> dict:
     direct = {k: np.zeros((h, w), np.float32) for k in TARGETS}   # P(hit) union, range-graded
     n_direct = 0
     for e in enemies:
-        prof = PROFILES[e["type"]]
+        prof = _profile(e["type"])
         if prof["fire"] != "direct":
             continue
         n_direct += 1
@@ -116,10 +125,11 @@ def run(side: str = "west", res: float = 2.0) -> dict:
     # ---- indirect: in mortar range AND (observed by any eyes OR pre-registered) ----
     in_range = np.zeros((h, w), bool)
     for e in enemies:
-        if PROFILES[e["type"]]["fire"] != "indirect":
+        prof = _profile(e["type"])
+        if prof["fire"] != "indirect":
             continue
         E, N, _ = e["world"]
-        in_range |= np.hypot(gx - E, gy - N) <= PROFILES[e["type"]]["mx"]
+        in_range |= np.hypot(gx - E, gy - N) <= prof["mx"]
     observed = depth["dismount"] > 0
     indirect = in_range.astype(np.float32) * np.clip(0.6 * observed + 0.7 * trp, 0.0, 0.9)
 
@@ -166,7 +176,7 @@ def run(side: str = "west", res: float = 2.0) -> dict:
 
     print(f"{n_direct} direct shooters projected | max engagement depth {info['max_engagement_depth']} "
           f"| {info['pct_in_kill_zone']}% of ground in a >=2 kill zone | {len(trps)} TRPs on chokepoints")
-    print(f"wrote build/fields_cost_*.tif + fields_depth.tif + danger.bin + depth.bin + fields.json")
+    print("wrote build/fields_cost_*.tif + fields_depth.tif + danger.bin + depth.bin + fields.json")
     return info
 
 
