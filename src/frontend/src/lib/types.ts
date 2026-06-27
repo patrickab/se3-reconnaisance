@@ -117,12 +117,23 @@ export interface ThreatInfo {
   positions: ThreatPosition[]
 }
 
+export type RiskZone = 'kill_zone' | 'high' | 'moderate' | 'low'
+
+export interface SoldierExposure {
+  world: [number, number, number]
+  zone: RiskZone
+  danger: number      // 0-255 risk cost at the soldier's spot
+  depth: number       // overlapping fields of fire on the soldier
+  exposed: boolean    // currently seen by ≥1 enemy
+}
+
 export interface FieldsInfo {
   side: string
   n_direct_shooters: number
   max_engagement_depth: number
   trps: [number, number][]
   pct_in_kill_zone: number
+  soldiers?: SoldierExposure[]   // placed friendlies + their current risk zone (danger banner)
   note: string
 }
 
