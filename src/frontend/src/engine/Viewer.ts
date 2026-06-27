@@ -205,7 +205,7 @@ export class Viewer {
     this.controls.target.set(0, 0, 0)
     this.controls.update()
     this.resize()
-    return { viewshed: !!vsFlags, threat: !!thFlags, fields: !!dgFlags }
+    return { viewshed: true, threat: !!thFlags, fields: !!dgFlags }
   }
 
   setColorMode(mode: ColorMode) {
@@ -278,6 +278,7 @@ export class Viewer {
 
   setViewshed(flags: Uint8Array, info: ViewshedInfo) {
     if (!this.meta) return
+    vsFlags = flags
     this.colors.viewshed = this.buildViewshedColors(flags)
     this.buildObserver(info, this.meta)
     if (this.colorMode === 'viewshed') this.setColorMode('viewshed')
