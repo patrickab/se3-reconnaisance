@@ -1,10 +1,10 @@
 // Object class → fill colour (tactical palette lives in tailwind.config.js).
 export const CLASS_COLORS: Record<string, number> = {
-  car: 0xff4d4d,
-  container: 0xffa033,
-  wall: 0xffe14d,
-  house: 0x4dd2ff,
-  shelter: 0x6bff8f,
+  car: 0xff5a5f,
+  container: 0xffb000,
+  wall: 0xe6dc4f,
+  house: 0x42c8ff,
+  shelter: 0x5ee27a,
 }
 
 // Google Turbo colormap, t in [0,1] → [r,g,b] in [0,1].

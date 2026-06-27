@@ -1,3 +1,5 @@
+export type BoxClass = 'car' | 'container' | 'wall' | 'house' | 'shelter'
+
 export interface CloudMeta {
   n: number
   origin: [number, number, number]
@@ -7,7 +9,7 @@ export interface CloudMeta {
 export interface BoundingBox {
   id: string
   name: string
-  class_label: 'car' | 'container' | 'wall' | 'house' | 'shelter'
+  class_label: BoxClass
   center: [number, number, number]
   extent: [number, number, number]
   rotation: [number, number, number, number]
@@ -29,6 +31,11 @@ export interface ViewshedInfo {
   cells_visible: number
 }
 
-export type ColorMode = 'rgb' | 'height' | 'viewshed'
+export type ColorMode = 'rgb' | 'height' | 'temperature' | 'viewshed'
 export type LayerKey = 'points' | 'boxes' | 'observer'
 export type Layers = Record<LayerKey, boolean>
+export type ClassVisibility = Record<BoxClass, boolean>
+export interface ScreenPoint {
+  x: number
+  y: number
+}

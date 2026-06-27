@@ -9,6 +9,7 @@ export default function SceneCanvas() {
   const viewerRef = useRef<Viewer | null>(null)
   const colorMode = useStore((s) => s.colorMode)
   const layers = useStore((s) => s.layers)
+  const classVisibility = useStore((s) => s.classVisibility)
   const selected = useStore((s) => s.selected)
 
   useEffect(() => {
@@ -17,7 +18,7 @@ export default function SceneCanvas() {
     const viewer = new Viewer(canvasRef.current)
     viewerRef.current = viewer
     if (import.meta.env.DEV) (window as unknown as { viewer: Viewer }).viewer = viewer
-    viewer.onPick((b) => useStore.getState().select(b))
+    viewer.onPick((b, point) => useStore.getState().select(b, point ?? null))
 
     ;(async () => {
       try {
@@ -29,6 +30,7 @@ export default function SceneCanvas() {
         if (disposed) return
         useStore.getState().setData({ meta, boxes, viewshedInfo })
         const ready = await viewer.load(meta, boxes, viewshedInfo)
+        viewer.setClassVisibility(useStore.getState().classVisibility)
         if (!disposed) useStore.getState().setReady(ready)
       } catch (e) {
         if (!disposed) useStore.getState().setError(e instanceof Error ? e.message : 'Failed to load')
@@ -51,6 +53,10 @@ export default function SceneCanvas() {
     if (!v) return
     ;(Object.keys(layers) as (keyof typeof layers)[]).forEach((k) => v.setLayer(k, layers[k]))
   }, [layers])
+
+  useEffect(() => {
+    viewerRef.current?.setClassVisibility(classVisibility)
+  }, [classVisibility])
 
   useEffect(() => {
     viewerRef.current?.setSelected(selected?.id ?? null)

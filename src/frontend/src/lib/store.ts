@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { BoundingBox, CloudMeta, ColorMode, LayerKey, Layers, ViewshedInfo } from './types'
+import { BoundingBox, BoxClass, ClassVisibility, CloudMeta, ColorMode, LayerKey, Layers, ScreenPoint, ViewshedInfo } from './types'
 
 interface AppState {
   meta: CloudMeta | null
@@ -11,14 +11,25 @@ interface AppState {
 
   colorMode: ColorMode
   layers: Layers
+  classVisibility: ClassVisibility
   selected: BoundingBox | null
+  selectedPoint: ScreenPoint | null
 
   setData: (d: { meta: CloudMeta; boxes: BoundingBox[]; viewshedInfo: ViewshedInfo | null }) => void
   setReady: (viewshedReady: boolean) => void
   setError: (error: string) => void
   setColorMode: (colorMode: ColorMode) => void
   toggleLayer: (key: LayerKey) => void
-  select: (selected: BoundingBox | null) => void
+  toggleClass: (key: BoxClass) => void
+  select: (selected: BoundingBox | null, selectedPoint?: ScreenPoint | null) => void
+}
+
+const DEFAULT_CLASS_VISIBILITY: ClassVisibility = {
+  car: true,
+  container: true,
+  wall: true,
+  house: true,
+  shelter: true,
 }
 
 export const useStore = create<AppState>((set) => ({
@@ -31,12 +42,15 @@ export const useStore = create<AppState>((set) => ({
 
   colorMode: 'rgb',
   layers: { points: true, boxes: true, observer: true },
+  classVisibility: DEFAULT_CLASS_VISIBILITY,
   selected: null,
+  selectedPoint: null,
 
   setData: (d) => set({ ...d, loading: false, error: null }),
   setReady: (viewshedReady) => set({ viewshedReady }),
   setError: (error) => set({ error, loading: false }),
   setColorMode: (colorMode) => set({ colorMode }),
   toggleLayer: (key) => set((s) => ({ layers: { ...s.layers, [key]: !s.layers[key] } })),
-  select: (selected) => set({ selected }),
+  toggleClass: (key) => set((s) => ({ classVisibility: { ...s.classVisibility, [key]: !s.classVisibility[key] } })),
+  select: (selected, selectedPoint = null) => set({ selected, selectedPoint }),
 }))

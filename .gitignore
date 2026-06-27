@@ -8,6 +8,7 @@ data/*.bag
 data/**/*.ply
 data/**/*.json
 *__pycache__*
+src/frontend/.vite/
 
 # ---- frontend (node + build output) ----
 src/frontend/node_modules/

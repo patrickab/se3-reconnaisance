@@ -1,107 +1,74 @@
+import type { ReactNode } from 'react'
 import { useStore } from '../lib/store'
 import { ColorMode, LayerKey } from '../lib/types'
 
 const MODES: { key: ColorMode; label: string }[] = [
   { key: 'rgb', label: 'RGB' },
-  { key: 'height', label: 'Elevation' },
-  { key: 'viewshed', label: 'Viewshed' },
+  { key: 'height', label: 'Height' },
 ]
 
 const LAYERS: { key: LayerKey; label: string }[] = [
-  { key: 'points', label: 'Point cloud' },
+  { key: 'points', label: 'Cloud' },
   { key: 'boxes', label: 'Objects' },
-  { key: 'observer', label: 'Observer' },
 ]
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="px-4 py-3 border-b border-tactical-border">
-      <h2 className="text-[10px] font-semibold tracking-[0.15em] text-tactical-secondary uppercase mb-2">{title}</h2>
-      {children}
-    </div>
-  )
-}
-
 export default function Sidebar() {
-  const { colorMode, setColorMode, layers, toggleLayer, selected, viewshedReady, viewshedInfo } = useStore()
+  const { colorMode, setColorMode, layers, toggleLayer } = useStore()
 
   return (
-    <aside className="w-72 shrink-0 bg-black/40 backdrop-blur border-l border-tactical-border flex flex-col font-mono text-tactical-text">
-      <Section title="Colour mode">
-        <div className="grid grid-cols-3 gap-1">
-          {MODES.map((m) => {
-            const disabled = m.key === 'viewshed' && !viewshedReady
-            const active = colorMode === m.key
-            return (
-              <button
-                key={m.key}
-                disabled={disabled}
-                onClick={() => setColorMode(m.key)}
-                className={`px-2 py-1.5 text-xs rounded border transition
-                  ${active ? 'bg-tactical-accent/20 border-tactical-accent text-tactical-accent' : 'border-tactical-border hover:border-tactical-secondary'}
-                  ${disabled ? 'opacity-30 cursor-not-allowed' : ''}`}
-              >
-                {m.label}
-              </button>
-            )
-          })}
+    <aside className="flex w-80 shrink-0 flex-col border-l border-tactical-border bg-tactical-panel/95 text-tactical-text max-md:absolute max-md:bottom-0 max-md:right-0 max-md:h-[42dvh] max-md:w-full max-md:border-l-0 max-md:border-t">
+      <header className="border-b border-tactical-border px-4 py-4">
+        <div>
+          <div className="text-sm font-semibold">Scene controls</div>
+          <div className="mt-1 text-xs text-tactical-muted">Display and inspection</div>
         </div>
-      </Section>
+      </header>
 
-      <Section title="Layers">
-        <div className="space-y-1.5">
-          {LAYERS.map((l) => (
-            <label key={l.key} className="flex items-center gap-2 text-xs cursor-pointer text-tactical-secondary hover:text-tactical-text">
-              <input type="checkbox" checked={layers[l.key]} onChange={() => toggleLayer(l.key)} className="accent-tactical-accent" />
-              {l.label}
-            </label>
-          ))}
-        </div>
-      </Section>
+      <div className="flex-1 overflow-auto px-4 py-4">
+        <Section title="Mode">
+          <div className="space-y-2">
+            {MODES.map((mode) => {
+              const active = colorMode === mode.key
+              return (
+                <label
+                  key={mode.key}
+                  className={`flex cursor-pointer items-center justify-between gap-3 text-sm ${active ? 'text-tactical-text' : 'text-tactical-secondary hover:text-tactical-text'}`}
+                >
+                  <span>{mode.label}</span>
+                  <input
+                    type="radio"
+                    name="color-mode"
+                    checked={active}
+                    onChange={() => setColorMode(mode.key)}
+                    className="h-4 w-4 accent-tactical-accent"
+                  />
+                </label>
+              )
+            })}
+          </div>
+        </Section>
 
-      <div className="flex-1 overflow-auto">
-        {selected ? (
-          <Section title="Selected object">
-            <div className="text-xs space-y-1">
-              <Row k="Name" v={selected.name} />
-              <Row k="Class" v={selected.class_label} />
-              <Row k="Size" v={selected.extent.map((x) => x.toFixed(1)).join(' × ') + ' m'} />
-              <Row k="Temp" v={`${selected.avg_temperature.toFixed(1)} °C`} accent="danger" />
-              <Row k="Easting" v={selected.center[0].toFixed(1)} />
-              <Row k="Northing" v={selected.center[1].toFixed(1)} />
-            </div>
-          </Section>
-        ) : viewshedInfo && colorMode === 'viewshed' ? (
-          <Section title="Viewshed · enemy OP">
-            <div className="text-xs space-y-1">
-              <Row k="OP" v={viewshedInfo.observer_label} accent="warning" />
-              <Row k="Eye height" v={`${viewshedInfo.observer_world[2].toFixed(0)} m`} />
-              <Row k="Range" v={`${viewshedInfo.params.range_m.toFixed(0)} m`} />
-              <Row k="Arc" v={`${viewshedInfo.params.arc_deg.toFixed(0)}°`} />
-              <Row k="Seen" v={`${viewshedInfo.pct_points_visible}%`} accent="danger" />
-              <Row k="Dead ground" v={`${(100 - viewshedInfo.pct_points_visible).toFixed(1)}%`} accent="success" />
-            </div>
-          </Section>
-        ) : (
-          <div className="px-4 py-6 text-xs text-tactical-secondary/60">Click an object to inspect.</div>
-        )}
+        <Section title="Layers">
+          <div className="space-y-2">
+            {LAYERS.map((layer) => (
+              <label key={layer.key} className="flex cursor-pointer items-center justify-between gap-3 text-sm text-tactical-secondary hover:text-tactical-text">
+                <span>{layer.label}</span>
+                <input type="checkbox" checked={layers[layer.key]} onChange={() => toggleLayer(layer.key)} className="h-4 w-4 accent-tactical-accent" />
+              </label>
+            ))}
+          </div>
+        </Section>
+
       </div>
     </aside>
   )
 }
 
-const ACCENT = {
-  danger: 'text-tactical-danger',
-  success: 'text-tactical-success',
-  warning: 'text-tactical-warning',
-} as const
-
-function Row({ k, v, accent }: { k: string; v: string; accent?: keyof typeof ACCENT }) {
-  const color = accent ? ACCENT[accent] : 'text-tactical-text'
+function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <div className="flex justify-between gap-3">
-      <span className="text-tactical-secondary">{k}</span>
-      <span className={color}>{v}</span>
-    </div>
+    <section className="mb-6 last:mb-0">
+      <h2 className="mb-3 text-[11px] font-medium uppercase tracking-[0.16em] text-tactical-muted">{title}</h2>
+      {children}
+    </section>
   )
 }

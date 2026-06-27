@@ -3,21 +3,81 @@
 @tailwind utilities;
 
 @layer base {
+  html,
   body {
     @apply bg-tactical-bg text-tactical-text;
+    margin: 0;
+    min-height: 100%;
+  }
+
+  body {
+    font-family: theme('fontFamily.sans');
+    font-variant-numeric: tabular-nums;
   }
 
   button {
     @apply transition-colors duration-150;
   }
+
+  button:focus-visible,
+  input:focus-visible {
+    outline: 2px solid theme('colors.tactical.warning');
+    outline-offset: 2px;
+  }
 }
 
 @layer components {
   .panel {
-    @apply bg-black/50 border border-tactical-border rounded-lg backdrop-blur-sm;
+    @apply border border-tactical-border backdrop-blur-sm;
+    background:
+      linear-gradient(180deg, rgb(20 30 36 / 0.96), rgb(8 15 20 / 0.97));
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.06),
+      0 8px 24px rgb(0 0 0 / 0.34);
   }
 
   .hud-text {
     @apply font-mono text-xs;
+  }
+
+  .soft-tag {
+    @apply inline-flex items-center border px-2 py-1 font-mono text-[10px] uppercase tracking-[0.12em];
+  }
+
+  .tactical-button {
+    @apply border px-3 py-2 text-left font-mono text-xs disabled:cursor-not-allowed;
+  }
+
+  .data-row {
+    @apply flex items-center justify-between gap-3 border-b border-tactical-border/50 py-2 font-mono text-xs;
+  }
+
+  .legend-cell {
+    @apply border border-tactical-border;
+    background: rgb(9 18 23 / 0.86);
+  }
+
+  .legend-cell:hover {
+    border-color: rgb(142 202 230 / 0.55);
+  }
+
+  .segmented-toggle {
+    @apply border border-tactical-border;
+    background: rgb(7 14 18 / 0.72);
+  }
+
+  .segmented-toggle > button + button {
+    @apply border-l border-tactical-border;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.001ms !important;
   }
 }

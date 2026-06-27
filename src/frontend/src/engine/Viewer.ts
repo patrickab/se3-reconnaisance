@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
-import { BoundingBox, CloudMeta, ColorMode, LayerKey, ViewshedInfo } from '../lib/types'
+import { BoundingBox, ClassVisibility, CloudMeta, ColorMode, LayerKey, ViewshedInfo } from '../lib/types'
 import { CLASS_COLORS, TURBO } from '../lib/colors'
 import { fetchCloud, fetchViewshed } from '../lib/api'
 import { w2v } from '../lib/utils'
@@ -34,18 +34,23 @@ export class Viewer {
   private colors: Partial<Record<ColorMode, THREE.BufferAttribute>> = {}
   private boxGroup = new THREE.Group()
   private observerGroup = new THREE.Group()
-  private pickCb: (box: BoundingBox | null) => void = () => {}
+  private pickCb: (box: BoundingBox | null, point?: { x: number; y: number }) => void = () => {}
   private boxById = new Map<string, BoundingBox>()
+  private boxTempMin = 0
+  private boxTempMax = 1
+  private colorMode: ColorMode = 'rgb'
 
   constructor(private canvas: HTMLCanvasElement) {
-    this.scene.background = new THREE.Color(0x0a0e13)
+    this.scene.background = new THREE.Color(0x080c10)
     this.scene.add(this.boxGroup, this.observerGroup)
 
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2))
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' })
+    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2.5))
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping
+    this.renderer.toneMappingExposure = 1.08
 
-    this.camera = new THREE.PerspectiveCamera(55, 1, 0.5, 20000)
+    this.camera = new THREE.PerspectiveCamera(48, 1, 0.5, 20000)
     this.controls = new OrbitControls(this.camera, canvas)
     this.controls.enableDamping = true
     this.controls.dampingFactor = 0.08
@@ -128,7 +133,7 @@ export class Viewer {
     geo.computeBoundingSphere()
     this.points = new THREE.Points(
       geo,
-      new THREE.PointsMaterial({ size: 1.1, vertexColors: true, sizeAttenuation: true })
+      new THREE.PointsMaterial({ size: 0.82, vertexColors: true, sizeAttenuation: true })
     )
     this.scene.add(this.points)
 
@@ -144,11 +149,13 @@ export class Viewer {
   }
 
   setColorMode(mode: ColorMode) {
+    this.colorMode = mode
     const attr = this.colors[mode] ?? this.colors.rgb
     if (this.points && attr) {
       this.points.geometry.setAttribute('color', attr)
       attr.needsUpdate = true
     }
+    this.updateBoxColors()
   }
 
   setLayer(key: LayerKey, visible: boolean) {
@@ -157,15 +164,22 @@ export class Viewer {
     if (key === 'observer') this.observerGroup.visible = visible
   }
 
+  setClassVisibility(visibility: ClassVisibility) {
+    this.boxGroup.children.forEach((m) => {
+      const mesh = m as THREE.Mesh
+      mesh.visible = visibility[mesh.userData.classLabel as keyof ClassVisibility]
+    })
+  }
+
   setSelected(id: string | null) {
     this.boxGroup.children.forEach((m) => {
       const mesh = m as THREE.Mesh
       const mat = mesh.material as THREE.MeshBasicMaterial
-      mat.opacity = mesh.userData.id === id ? 0.45 : 0.14
+      mat.opacity = mesh.userData.id === id ? 0.55 : 0.2
     })
   }
 
-  onPick(cb: (box: BoundingBox | null) => void) {
+  onPick(cb: (box: BoundingBox | null, point?: { x: number; y: number }) => void) {
     this.pickCb = cb
   }
 
@@ -189,6 +203,8 @@ export class Viewer {
   // ---- internals ----
 
   private buildBoxes(boxes: BoundingBox[], meta: CloudMeta) {
+    this.boxTempMin = Math.min(...boxes.map((b) => b.avg_temperature))
+    this.boxTempMax = Math.max(...boxes.map((b) => b.avg_temperature))
     for (const b of boxes) {
       const [lx, ly, lz] = b.extent
       const mesh = new THREE.Mesh(
@@ -196,7 +212,7 @@ export class Viewer {
         new THREE.MeshBasicMaterial({
           color: CLASS_COLORS[b.class_label] ?? 0xffffff,
           transparent: true,
-          opacity: 0.14,
+          opacity: 0.2,
           depthWrite: false,
           side: THREE.DoubleSide,
         })
@@ -205,9 +221,27 @@ export class Viewer {
       mesh.position.set(vx, vy, vz)
       mesh.rotation.y = 2 * Math.atan2(b.rotation[2], b.rotation[3])
       mesh.userData.id = b.id
+      mesh.userData.classLabel = b.class_label
+      mesh.userData.temperature = b.avg_temperature
       this.boxGroup.add(mesh)
       this.boxById.set(b.id, b)
     }
+    this.updateBoxColors()
+  }
+
+  private updateBoxColors() {
+    const tempRange = this.boxTempMax - this.boxTempMin || 1
+    this.boxGroup.children.forEach((m) => {
+      const mesh = m as THREE.Mesh
+      const mat = mesh.material as THREE.MeshBasicMaterial
+      if (this.colorMode === 'temperature') {
+        const t = ((mesh.userData.temperature as number) - this.boxTempMin) / tempRange
+        const [r, g, b] = TURBO(t)
+        mat.color.setRGB(r, g, b)
+      } else {
+        mat.color.setHex(CLASS_COLORS[mesh.userData.classLabel as string] ?? 0xffffff)
+      }
+    })
   }
 
   private buildObserver(vs: ViewshedInfo, meta: CloudMeta) {
@@ -311,6 +345,6 @@ export class Viewer {
     )
     this.raycaster.setFromCamera(ndc, this.camera)
     const hit = this.raycaster.intersectObjects(this.boxGroup.children, false)[0]
-    this.pickCb(hit ? this.boxById.get(hit.object.userData.id) ?? null : null)
+    this.pickCb(hit ? this.boxById.get(hit.object.userData.id) ?? null : null, { x: e.clientX, y: e.clientY })
   }
 }

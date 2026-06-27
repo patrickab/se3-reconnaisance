@@ -1,15 +1,126 @@
+import { useState } from 'react'
+import { CLASS_COLORS } from '../lib/colors'
 import { useStore } from '../lib/store'
+import { BoxClass, ColorMode } from '../lib/types'
+
+const CLASSES: { key: BoxClass; label: string }[] = [
+  { key: 'shelter', label: 'Shelter' },
+  { key: 'house', label: 'House' },
+  { key: 'container', label: 'Container' },
+  { key: 'wall', label: 'Wall' },
+  { key: 'car', label: 'Car' },
+]
+
+const MODES: { key: ColorMode; label: string }[] = [
+  { key: 'rgb', label: 'RGB' },
+  { key: 'height', label: 'Height' },
+  { key: 'temperature', label: 'Temp.' },
+]
 
 export default function Hud() {
-  const { meta, boxes } = useStore()
+  const [collapsed, setCollapsed] = useState(false)
+  const { meta, boxes, colorMode, setColorMode, layers, toggleLayer, classVisibility, toggleClass } = useStore()
   if (!meta) return null
+
+  const counts = boxes.reduce<Record<BoxClass, number>>(
+    (acc, box) => ({ ...acc, [box.class_label]: acc[box.class_label] + 1 }),
+    { car: 0, container: 0, wall: 0, house: 0, shelter: 0 }
+  )
+  const boxesVisible = layers.boxes
+
   return (
-    <div className="absolute top-4 left-4 panel px-3 py-2 font-mono pointer-events-none">
-      <div className="text-tactical-accent text-xs font-semibold tracking-wide">SE3 TACTICAL INTELLIGENCE</div>
-      <div className="text-[11px] text-tactical-secondary mt-0.5">
-        {meta.span[0].toFixed(0)} × {meta.span[1].toFixed(0)} m · {meta.n.toLocaleString()} pts · {boxes.length} objects
+    <div className="absolute left-4 top-4 z-10 w-[min(10rem,calc(100vw-2rem))] font-mono">
+      <div className="panel px-2 py-2">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <div className="truncate text-xs font-semibold tracking-[0.12em] text-tactical-accent">SE3 Recon</div>
+            <div className="mt-0.5 text-[10px] text-tactical-muted">{boxes.length} bboxes</div>
+          </div>
+          <button
+            onClick={() => setCollapsed((v) => !v)}
+            className="h-5 w-5 border border-tactical-border text-center text-[13px] leading-[16px] text-tactical-muted hover:text-tactical-text"
+            aria-expanded={!collapsed}
+            aria-label={collapsed ? 'Expand panel' : 'Collapse panel'}
+          >
+            {collapsed ? '+' : '-' }
+          </button>
+        </div>
+
+        {!collapsed && (
+          <div className="mt-2 border-t border-tactical-border/70 pt-2">
+            <div className="space-y-0.5 text-[10px] text-tactical-secondary">
+              <Metric k="area" v={`${meta.span[0].toFixed(0)} x ${meta.span[1].toFixed(0)} m`} />
+              <Metric k="points" v={meta.n.toLocaleString()} />
+              <Metric k="objects" v={boxes.length.toString()} />
+            </div>
+
+            <div className="mt-2 border-t border-tactical-border/60 pt-2">
+              <div className="sr-only">Display mode</div>
+              <div className="segmented-toggle grid grid-cols-3 text-[8px] text-tactical-secondary">
+              {MODES.map((mode) => {
+                const active = colorMode === mode.key
+                return (
+                  <button
+                    key={mode.key}
+                    onClick={() => setColorMode(mode.key)}
+                    className={`min-w-0 truncate px-1.5 py-1 transition hover:text-tactical-text ${
+                      active ? 'bg-tactical-panel2 text-tactical-accent' : mode.key === 'temperature' ? 'text-tactical-warning' : ''
+                    }`}
+                    aria-pressed={active}
+                  >
+                    {mode.label}
+                  </button>
+                )
+              })}
+              </div>
+            </div>
+
+            <div className="mt-2 border-t border-tactical-border/60 pt-2">
+              <button
+                onClick={() => toggleLayer('boxes')}
+                className="w-full border border-tactical-border px-2 py-1 text-left text-[10px] text-tactical-secondary hover:text-tactical-text"
+              >
+                {boxesVisible ? 'disable boxes' : 'enable boxes'}
+              </button>
+
+              <div className="mt-1.5 space-y-1">
+                {CLASSES.map(({ key, label }) => {
+                  const active = classVisibility[key]
+                  return (
+                    <button
+                      key={key}
+                      onClick={() => toggleClass(key)}
+                      className={`legend-cell flex w-full items-center justify-between gap-2 px-2 py-1 text-[11px] transition ${
+                        active && boxesVisible ? 'text-tactical-text' : 'text-tactical-muted opacity-45'
+                      }`}
+                      aria-pressed={active}
+                    >
+                      <span className="flex min-w-0 items-center gap-1.5">
+                        <span className="h-2 w-2 shrink-0 border border-black/30" style={{ backgroundColor: hexColor(CLASS_COLORS[key]) }} />
+                        <span className="truncate">{label}</span>
+                      </span>
+                      <span className="text-tactical-muted">{counts[key]}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
-      <div className="text-[10px] text-tactical-secondary/60 mt-1">WASD move · Q/E altitude · arrows look · scroll zoom</div>
     </div>
   )
+}
+
+function Metric({ k, v }: { k: string; v: string }) {
+  return (
+    <div className="flex justify-between gap-3">
+      <span className="text-tactical-muted">{k}</span>
+      <span className="text-tactical-secondary">{v}</span>
+    </div>
+  )
+}
+
+function hexColor(value: number) {
+  return `#${value.toString(16).padStart(6, '0')}`
 }
