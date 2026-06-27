@@ -31,8 +31,31 @@ export interface ViewshedInfo {
   cells_visible: number
 }
 
-export type ColorMode = 'rgb' | 'height' | 'temperature' | 'viewshed'
-export type LayerKey = 'points' | 'boxes' | 'observer'
+export type ThreatRole = 'observer' | 'anti_armor' | 'indirect'
+export type ThreatType = 'sniper_op' | 'tank' | 'mortar'
+
+export interface ThreatPosition {
+  id: string
+  role: ThreatRole
+  type: ThreatType
+  world: [number, number, number]
+  score: number
+  sees_pct_of_approach: number
+  cover_dist_m: number
+  height_above_ground_m: number
+  thermal_cue: number
+  defilade_m: number
+}
+
+export interface ThreatInfo {
+  side: string
+  aa_points: number
+  range_m: number
+  positions: ThreatPosition[]
+}
+
+export type ColorMode = 'rgb' | 'height' | 'temperature' | 'viewshed' | 'threat'
+export type LayerKey = 'points' | 'boxes' | 'observer' | 'threats'
 export type Layers = Record<LayerKey, boolean>
 export type ClassVisibility = Record<BoxClass, boolean>
 export interface ScreenPoint {

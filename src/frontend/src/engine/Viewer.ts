@@ -1,14 +1,15 @@
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
-import { BoundingBox, ClassVisibility, CloudMeta, ColorMode, LayerKey, ViewshedInfo } from '../lib/types'
+import { BoundingBox, ClassVisibility, CloudMeta, ColorMode, LayerKey, ThreatInfo, ThreatPosition, ViewshedInfo } from '../lib/types'
 import { CLASS_COLORS, TURBO } from '../lib/colors'
-import { fetchCloud, fetchViewshed } from '../lib/api'
+import { fetchCloud, fetchViewshed, fetchThreat } from '../lib/api'
 import { w2v } from '../lib/utils'
 
 // Module-level cache: the 54 MB cloud is fetched at most once per page load,
 // surviving React StrictMode double-mounts and component remounts.
 let cloudBuf: ArrayBuffer | null = null
 let vsFlags: Uint8Array | null = null
+let thFlags: Uint8Array | null = null
 
 // sRGB → linear transfer (IEC 61966-2-1). Vertex colours must be linear because
 // the renderer re-encodes to sRGB on output.
@@ -34,7 +35,10 @@ export class Viewer {
   private colors: Partial<Record<ColorMode, THREE.BufferAttribute>> = {}
   private boxGroup = new THREE.Group()
   private observerGroup = new THREE.Group()
+  private threatGroup = new THREE.Group()
+  private threatPickables: THREE.Mesh[] = []
   private pickCb: (box: BoundingBox | null, point?: { x: number; y: number }) => void = () => {}
+  private pickThreatCb: (p: ThreatPosition | null, point?: { x: number; y: number }) => void = () => {}
   private boxById = new Map<string, BoundingBox>()
   private boxTempMin = 0
   private boxTempMax = 1
@@ -42,7 +46,7 @@ export class Viewer {
 
   constructor(private canvas: HTMLCanvasElement) {
     this.scene.background = new THREE.Color(0x080c10)
-    this.scene.add(this.boxGroup, this.observerGroup)
+    this.scene.add(this.boxGroup, this.observerGroup, this.threatGroup)
 
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' })
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2.5))
@@ -70,13 +74,15 @@ export class Viewer {
     loop()
   }
 
-  /** Fetch the cloud + viewshed and build the whole scene. Idempotent. */
-  async load(meta: CloudMeta, boxes: BoundingBox[], vs: ViewshedInfo | null): Promise<boolean> {
+  /** Fetch the cloud + viewshed + threat and build the whole scene. Idempotent. */
+  async load(meta: CloudMeta, boxes: BoundingBox[], vs: ViewshedInfo | null,
+             threat: ThreatInfo | null): Promise<{ viewshed: boolean; threat: boolean }> {
     const [, , sz] = meta.span
     const [sx, sy] = meta.span
 
     if (!cloudBuf) cloudBuf = await fetchCloud()
     if (vs && !vsFlags) vsFlags = await fetchViewshed()
+    if (threat && !thFlags) thFlags = await fetchThreat()
 
     const { n } = meta
     const pos = new Float32Array(cloudBuf, 0, n * 3)
@@ -126,6 +132,23 @@ export class Viewer {
       }
       this.colors.viewshed = new THREE.BufferAttribute(colVS, 3)
     }
+    if (thFlags) {
+      const colTH = new Float32Array(n * 3)
+      for (let i = 0; i < n; i++) {
+        const v = thFlags[i] / 255
+        if (v < 0.04) {
+          colTH[i * 3] = srgb2lin(0.1) // cold = unlikely enemy position
+          colTH[i * 3 + 1] = srgb2lin(0.11)
+          colTH[i * 3 + 2] = srgb2lin(0.13)
+        } else {
+          const c = TURBO(v) // turbo heatmap = how well the position dominates our approach
+          colTH[i * 3] = srgb2lin(c[0])
+          colTH[i * 3 + 1] = srgb2lin(c[1])
+          colTH[i * 3 + 2] = srgb2lin(c[2])
+        }
+      }
+      this.colors.threat = new THREE.BufferAttribute(colTH, 3)
+    }
 
     const geo = new THREE.BufferGeometry()
     geo.setAttribute('position', new THREE.BufferAttribute(positions, 3))
@@ -139,13 +162,14 @@ export class Viewer {
 
     this.buildBoxes(boxes, meta)
     if (vs) this.buildObserver(vs, meta)
+    if (threat) this.buildThreat(threat, meta)
 
     const d = Math.max(sx, sy)
     this.camera.position.set(0, d * 0.55, d * 0.85)
     this.controls.target.set(0, 0, 0)
     this.controls.update()
     this.resize()
-    return !!vsFlags
+    return { viewshed: !!vsFlags, threat: !!thFlags }
   }
 
   setColorMode(mode: ColorMode) {
@@ -162,6 +186,7 @@ export class Viewer {
     if (key === 'points' && this.points) this.points.visible = visible
     if (key === 'boxes') this.boxGroup.visible = visible
     if (key === 'observer') this.observerGroup.visible = visible
+    if (key === 'threats') this.threatGroup.visible = visible
   }
 
   setClassVisibility(visibility: ClassVisibility) {
@@ -181,6 +206,10 @@ export class Viewer {
 
   onPick(cb: (box: BoundingBox | null, point?: { x: number; y: number }) => void) {
     this.pickCb = cb
+  }
+
+  onPickThreat(cb: (p: ThreatPosition | null, point?: { x: number; y: number }) => void) {
+    this.pickThreatCb = cb
   }
 
   dispose() {
@@ -242,6 +271,36 @@ export class Viewer {
         mat.color.setHex(CLASS_COLORS[mesh.userData.classLabel as string] ?? 0xffffff)
       }
     })
+  }
+
+  // Likely enemy positions (threat template output) → distinct 3D assets:
+  // ◆ sniper/OP · ▮ tank · ⬢ mortar. The markers ARE the verification.
+  private buildThreat(threat: ThreatInfo, meta: CloudMeta) {
+    const ENEMY = 0xff2b2b
+    const groundY = -meta.span[2] / 2
+    for (const p of threat.positions) {
+      const [vx, vy, vz] = w2v(p.world, meta.origin, meta.span)
+      const top = vy + 28
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(8, 12, 32),
+        new THREE.MeshBasicMaterial({ color: ENEMY, transparent: true, opacity: 0.7, side: THREE.DoubleSide })
+      )
+      ring.rotation.x = -Math.PI / 2
+      ring.position.set(vx, groundY + 0.3, vz)
+      const pole = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(vx, groundY, vz), new THREE.Vector3(vx, top, vz)]),
+        new THREE.LineBasicMaterial({ color: ENEMY })
+      )
+      const geo =
+        p.type === 'sniper_op' ? new THREE.OctahedronGeometry(9)
+        : p.type === 'mortar' ? new THREE.CylinderGeometry(7, 7, 12, 18)
+        : new THREE.BoxGeometry(16, 9, 20)
+      const icon = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: ENEMY }))
+      icon.position.set(vx, top, vz)
+      icon.userData.threat = p
+      this.threatGroup.add(ring, pole, icon)
+      this.threatPickables.push(icon)
+    }
   }
 
   private buildObserver(vs: ViewshedInfo, meta: CloudMeta) {
@@ -344,6 +403,12 @@ export class Viewer {
       -((e.clientY - r.top) / r.height) * 2 + 1
     )
     this.raycaster.setFromCamera(ndc, this.camera)
+    // enemy markers take priority over boxes
+    const th = this.raycaster.intersectObjects(this.threatPickables, false)[0]
+    if (th) {
+      this.pickThreatCb(th.object.userData.threat as ThreatPosition, { x: e.clientX, y: e.clientY })
+      return
+    }
     const hit = this.raycaster.intersectObjects(this.boxGroup.children, false)[0]
     this.pickCb(hit ? this.boxById.get(hit.object.userData.id) ?? null : null, { x: e.clientX, y: e.clientY })
   }

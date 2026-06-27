@@ -11,15 +11,19 @@ const CLASSES: { key: BoxClass; label: string }[] = [
   { key: 'car', label: 'Car' },
 ]
 
-const MODES: { key: ColorMode; label: string }[] = [
+const MODES: { key: ColorMode; label: string; needs?: 'viewshed' | 'threat' }[] = [
   { key: 'rgb', label: 'RGB' },
   { key: 'height', label: 'Height' },
   { key: 'temperature', label: 'Temp.' },
+  { key: 'viewshed', label: 'View', needs: 'viewshed' },
+  { key: 'threat', label: 'Threat', needs: 'threat' },
 ]
 
 export default function Hud() {
   const [collapsed, setCollapsed] = useState(false)
   const { meta, boxes, colorMode, setColorMode, layers, toggleLayer, classVisibility, toggleClass } = useStore()
+  const viewshedReady = useStore((s) => s.viewshedReady)
+  const threatReady = useStore((s) => s.threatReady)
   if (!meta) return null
 
   const counts = boxes.reduce<Record<BoxClass, number>>(
@@ -59,12 +63,19 @@ export default function Hud() {
               <div className="segmented-toggle grid grid-cols-3 text-[8px] text-tactical-secondary">
               {MODES.map((mode) => {
                 const active = colorMode === mode.key
+                const ready = mode.needs === 'viewshed' ? viewshedReady : mode.needs === 'threat' ? threatReady : true
                 return (
                   <button
                     key={mode.key}
-                    onClick={() => setColorMode(mode.key)}
-                    className={`min-w-0 truncate px-1.5 py-1 transition hover:text-tactical-text ${
-                      active ? 'bg-tactical-panel2 text-tactical-accent' : mode.key === 'temperature' ? 'text-tactical-warning' : ''
+                    disabled={!ready}
+                    onClick={() => ready && setColorMode(mode.key)}
+                    title={!ready ? `run ${mode.needs === 'threat' ? 'threat_template.py' : 'visibility.py'}` : undefined}
+                    className={`min-w-0 truncate px-1.5 py-1 transition ${
+                      !ready ? 'cursor-not-allowed opacity-30'
+                        : active ? 'bg-tactical-panel2 text-tactical-accent'
+                        : mode.key === 'threat' ? 'text-tactical-danger hover:text-tactical-text'
+                        : mode.key === 'temperature' ? 'text-tactical-warning hover:text-tactical-text'
+                        : 'hover:text-tactical-text'
                     }`}
                     aria-pressed={active}
                   >
@@ -82,6 +93,14 @@ export default function Hud() {
               >
                 {boxesVisible ? 'disable boxes' : 'enable boxes'}
               </button>
+              {threatReady && (
+                <button
+                  onClick={() => toggleLayer('threats')}
+                  className="mt-1 w-full border border-tactical-danger/60 px-2 py-1 text-left text-[10px] text-tactical-danger hover:text-tactical-text"
+                >
+                  {layers.threats ? 'hide enemy markers' : 'show enemy markers'}
+                </button>
+              )}
 
               <div className="mt-1.5 space-y-1">
                 {CLASSES.map(({ key, label }) => {

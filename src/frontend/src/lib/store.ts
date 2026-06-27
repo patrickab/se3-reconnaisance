@@ -1,11 +1,13 @@
 import { create } from 'zustand'
-import { BoundingBox, BoxClass, ClassVisibility, CloudMeta, ColorMode, LayerKey, Layers, ScreenPoint, ViewshedInfo } from './types'
+import { BoundingBox, BoxClass, ClassVisibility, CloudMeta, ColorMode, LayerKey, Layers, ScreenPoint, ThreatInfo, ThreatPosition, ViewshedInfo } from './types'
 
 interface AppState {
   meta: CloudMeta | null
   boxes: BoundingBox[]
   viewshedInfo: ViewshedInfo | null
   viewshedReady: boolean
+  threatInfo: ThreatInfo | null
+  threatReady: boolean
   loading: boolean
   error: string | null
 
@@ -14,14 +16,17 @@ interface AppState {
   classVisibility: ClassVisibility
   selected: BoundingBox | null
   selectedPoint: ScreenPoint | null
+  selectedThreat: ThreatPosition | null
+  selectedThreatPoint: ScreenPoint | null
 
-  setData: (d: { meta: CloudMeta; boxes: BoundingBox[]; viewshedInfo: ViewshedInfo | null }) => void
-  setReady: (viewshedReady: boolean) => void
+  setData: (d: { meta: CloudMeta; boxes: BoundingBox[]; viewshedInfo: ViewshedInfo | null; threatInfo: ThreatInfo | null }) => void
+  setReady: (r: { viewshedReady: boolean; threatReady: boolean }) => void
   setError: (error: string) => void
   setColorMode: (colorMode: ColorMode) => void
   toggleLayer: (key: LayerKey) => void
   toggleClass: (key: BoxClass) => void
   select: (selected: BoundingBox | null, selectedPoint?: ScreenPoint | null) => void
+  selectThreat: (selectedThreat: ThreatPosition | null, selectedThreatPoint?: ScreenPoint | null) => void
 }
 
 const DEFAULT_CLASS_VISIBILITY: ClassVisibility = {
@@ -37,20 +42,25 @@ export const useStore = create<AppState>((set) => ({
   boxes: [],
   viewshedInfo: null,
   viewshedReady: false,
+  threatInfo: null,
+  threatReady: false,
   loading: true,
   error: null,
 
   colorMode: 'rgb',
-  layers: { points: true, boxes: true, observer: true },
+  layers: { points: true, boxes: true, observer: true, threats: true },
   classVisibility: DEFAULT_CLASS_VISIBILITY,
   selected: null,
   selectedPoint: null,
+  selectedThreat: null,
+  selectedThreatPoint: null,
 
   setData: (d) => set({ ...d, loading: false, error: null }),
-  setReady: (viewshedReady) => set({ viewshedReady }),
+  setReady: ({ viewshedReady, threatReady }) => set({ viewshedReady, threatReady }),
   setError: (error) => set({ error, loading: false }),
   setColorMode: (colorMode) => set({ colorMode }),
   toggleLayer: (key) => set((s) => ({ layers: { ...s.layers, [key]: !s.layers[key] } })),
   toggleClass: (key) => set((s) => ({ classVisibility: { ...s.classVisibility, [key]: !s.classVisibility[key] } })),
-  select: (selected, selectedPoint = null) => set({ selected, selectedPoint }),
+  select: (selected, selectedPoint = null) => set({ selected, selectedPoint, selectedThreat: null }),
+  selectThreat: (selectedThreat, selectedThreatPoint = null) => set({ selectedThreat, selectedThreatPoint, selected: null }),
 }))

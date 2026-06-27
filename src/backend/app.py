@@ -115,3 +115,19 @@ def viewshed_info() -> Response:
     if not f.exists():
         return Response(status_code=404)
     return FileResponse(f, media_type="application/json")
+
+
+@app.get("/api/threat")
+def threat_bin() -> Response:
+    f = BUILD / "threat.bin"
+    if not f.exists():
+        return Response(status_code=404)
+    return Response(f.read_bytes(), media_type="application/octet-stream")
+
+
+@app.get("/api/threat-info")
+def threat_info() -> Response:
+    f = BUILD / "threat.json"
+    if not f.exists():
+        return Response(status_code=404)
+    return FileResponse(f, media_type="application/json")

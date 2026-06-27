@@ -2,6 +2,8 @@ import { useStore } from './lib/store'
 import SceneCanvas from './components/SceneCanvas'
 import Hud from './components/Hud'
 import ObjectPopup from './components/ObjectPopup'
+import ThreatPanel from './components/ThreatPanel'
+import ThreatPopup from './components/ThreatPopup'
 
 export default function App() {
   const error = useStore((s) => s.error)
@@ -13,6 +15,8 @@ export default function App() {
         <SceneCanvas />
         <Hud />
         <ObjectPopup />
+        <ThreatPanel />
+        <ThreatPopup />
         {loading && !error && (
           <div className="absolute left-4 top-4 z-20 panel px-3 py-2 font-mono text-xs text-tactical-secondary">
             Loading scene...
