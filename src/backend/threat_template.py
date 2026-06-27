@@ -34,19 +34,34 @@ from src.backend.terrain import BUILD, DATA, box_polygon, build_dsm, save_geotif
 from src.backend.visibility import viewshed  # noqa: E402
 
 
-def sample_avenue(bounds, side: str, n: int = 5) -> list[tuple[float, float]]:
-    """Grid of approach points along one edge (where our force would advance from)."""
-    xmin, ymin, xmax, ymax = bounds
-    mx, my = 0.10 * (xmax - xmin), 0.12 * (ymax - ymin)
-    if side in ("west", "east"):
-        xs = (np.linspace(xmin + 20, xmin + 0.22 * (xmax - xmin), 4) if side == "west"
-              else np.linspace(xmax - 0.22 * (xmax - xmin), xmax - 20, 4))
-        ys = np.linspace(ymin + my, ymax - my, n)
-    else:
-        ys = (np.linspace(ymin + 20, ymin + 0.22 * (ymax - ymin), 4) if side == "south"
-              else np.linspace(ymax - 0.22 * (ymax - ymin), ymax - 20, 4))
-        xs = np.linspace(xmin + mx, xmax - mx, n)
-    return [(float(x), float(y)) for x in xs for y in ys]
+def avenue_points(side: str, valid: np.ndarray, transform, n: int = 20) -> list[tuple[float, float]]:
+    """Sample our avenue of approach as REAL terrain in the chosen edge band of the
+    actual reconstruction footprint. (The old version sampled the bounding box, which
+    is irregular — it put approach points in the void off the map.)"""
+    ys, xs = np.where(valid)
+    es = transform.c + (xs + 0.5) * transform.a
+    ns = transform.f - (ys + 0.5) * (-transform.e)
+    keep = {
+        "west": es <= np.percentile(es, 18), "east": es >= np.percentile(es, 82),
+        "south": ns <= np.percentile(ns, 18), "north": ns >= np.percentile(ns, 82),
+    }[side]
+    eb, nb = es[keep], ns[keep]
+    if eb.size == 0:
+        return []
+    cross = nb if side in ("west", "east") else eb                 # spread across the band
+    order = np.argsort(cross)
+    idx = order[np.linspace(0, order.size - 1, min(n, order.size)).astype(int)]
+    return [(float(eb[i]), float(nb[i])) for i in idx]
+
+
+def load_friendly(data_dir: Path) -> list[tuple[float, float]] | None:
+    """Operator-placed friendly positions (ground truth) — override the auto avenue.
+    data/friendly.json: [[E, N], ...] in UTM. Doctrinally correct: the commander knows
+    his own disposition; we template the enemy from where our troops actually are."""
+    f = data_dir / "friendly.json"
+    if not f.exists():
+        return None
+    return [(float(p[0]), float(p[1])) for p in json.loads(f.read_text())] or None
 
 
 def main() -> None:
@@ -65,7 +80,10 @@ def main() -> None:
     boxes = json.loads((DATA / "bounding_boxes.json").read_text())
 
     # ---- 1. accumulate viewsheds from the avenue of approach (reciprocity) ----
-    aa = sample_avenue(bounds, args.side)
+    # operator-placed friendly positions (ground truth) win; else auto-sample REAL terrain
+    friendly = load_friendly(DATA)
+    aa = friendly or avenue_points(args.side, t["valid"], transform)
+    aa_source = "operator (friendly.json)" if friendly else f"auto-{args.side}"
     aa_cx = float(np.mean([p[0] for p in aa]))               # AA centroid: shooters orient on it
     aa_cy = float(np.mean([p[1] for p in aa]))
     acc = np.zeros((h, w), dtype=np.float32)
@@ -182,6 +200,7 @@ def main() -> None:
     # positions carry world (UTM) coords; the viewer maps them with w2v()
     # `avenue` = where we templated OUR approach from — the input that drives enemy facing.
     info = {"side": args.side, "aa_points": len(aa), "range_m": args.rng,
+            "avenue_source": aa_source,
             "avenue": [[round(x, 1), round(y, 1)] for x, y in aa],
             "avenue_centroid": [round(aa_cx, 1), round(aa_cy, 1)],
             "positions": positions}

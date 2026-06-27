@@ -39,7 +39,6 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from src.backend.app import MAX_POINTS, VOXEL, pack_cloud  # noqa: E402
 from src.backend.terrain import BUILD, DATA, box_polygon, build_dsm, save_geotiff  # noqa: E402
-from src.backend.threat_template import sample_avenue  # noqa: E402
 from src.backend.visibility import viewshed  # noqa: E402
 
 # Per-asset profiles (THREAT_LIBRARY). eye_h = sensor height above its footing;
@@ -68,11 +67,8 @@ def main() -> None:
     dsm, transform, bounds, (h, w) = t["dsm"], t["transform"], t["bounds"], t["shape"]
     threat = json.loads((BUILD / "threat.json").read_text())
     enemies = threat["positions"]
-
-    # facing: direct shooters orient toward our avenue of approach (where we come from)
-    aa = sample_avenue(bounds, args.side)
-    aa_cx = float(np.mean([p[0] for p in aa]))
-    aa_cy = float(np.mean([p[1] for p in aa]))
+    # same avenue the laydown was templated against (operator-placed or auto)
+    aa_cx, aa_cy = threat["avenue_centroid"]
 
     # coordinate grids (cell centres, UTM) for range / distance maths
     cols, rows = np.meshgrid(np.arange(w), np.arange(h))
