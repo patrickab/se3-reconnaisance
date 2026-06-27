@@ -8,6 +8,8 @@ export default function SceneCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const viewerRef = useRef<Viewer | null>(null)
   const viewshedRequestRef = useRef(0)
+  const analysisBusy = useRef(false)
+  const analysisDirty = useRef(false)
   const colorMode = useStore((s) => s.colorMode)
   const overlayOnRgb = useStore((s) => s.overlayOnRgb)
   const placing = useStore((s) => s.placing)
@@ -76,6 +78,18 @@ export default function SceneCanvas() {
     }
   }, [])
 
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.code !== 'Escape') return
+      const t = e.target as HTMLElement
+      if (t?.isContentEditable || t?.tagName === 'INPUT' || t?.tagName === 'TEXTAREA') return
+      const s = useStore.getState()
+      if (s.placing || s.removing) { s.setPlacing(null); s.setRemoving(false) }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
   useEffect(() => { viewerRef.current?.setColorMode(colorMode) }, [colorMode])
   useEffect(() => { viewerRef.current?.setOverlayOnRgb(overlayOnRgb) }, [overlayOnRgb])
   useEffect(() => { viewerRef.current?.setPlacing(placing) }, [placing])
@@ -88,6 +102,43 @@ export default function SceneCanvas() {
     if (!v) return
     v.setEnemyMarkers(units.filter((u) => u.side === 'hostile'))
     v.setFriendlyMarkers(units.filter((u) => u.side === 'friendly'))
+  }, [units])
+
+  // Auto-project the threat fields whenever the laydown changes — no explicit
+  // "analyse" step, no page reload. Debounced so rapid placements collapse into
+  // one run; single-flight (busy + dirty) so a change mid-run re-projects exactly
+  // once instead of overlapping backend file writes.
+  useEffect(() => {
+    const run = async () => {
+      const viewer = viewerRef.current
+      const s = useStore.getState()
+      if (!viewer || !s.meta) return
+      if (!s.units.some((u) => u.side === 'hostile')) return  // blank field — nothing to project (clean wipe is Reset)
+      if (analysisBusy.current) { analysisDirty.current = true; return }
+      analysisBusy.current = true
+      s.setScanning(true)
+      try {
+        do {
+          analysisDirty.current = false
+          await api.postRecompute()
+          const [threatInfo, fieldsInfo] = await Promise.all([api.fetchThreatInfo(), api.fetchFieldsInfo()])
+          const analyzed = threatInfo?.avenue_source === 'operator'
+          const th = analyzed ? threatInfo : null
+          const fl = analyzed ? fieldsInfo : null
+          const st = useStore.getState()
+          await viewer.setThreatFields(th, fl, st.meta!)
+          st.setData({ meta: st.meta!, boxes: st.boxes, viewshedInfo: st.viewshedInfo, threatInfo: th, fieldsInfo: fl })
+          st.setReady({ viewshedReady: st.viewshedReady, threatReady: !!th, fieldsReady: !!fl })
+        } while (analysisDirty.current)
+      } catch (e) {
+        if (import.meta.env.DEV) console.warn(e)
+      } finally {
+        analysisBusy.current = false
+        useStore.getState().setScanning(false)
+      }
+    }
+    const id = setTimeout(run, 600)
+    return () => clearTimeout(id)
   }, [units])
 
   useEffect(() => {

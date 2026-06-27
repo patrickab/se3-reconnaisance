@@ -6,6 +6,7 @@ import ThreatPanel from './components/ThreatPanel'
 import ThreatPopup from './components/ThreatPopup'
 import PlacedUnitPopup from './components/PlacedUnitPopup'
 import FriendlyPanel from './components/FriendlyPanel'
+import AnalyzingSpinner from './components/AnalyzingSpinner'
 
 export default function App() {
   const error = useStore((s) => s.error)
@@ -20,6 +21,7 @@ export default function App() {
         <SceneCanvas />
         <Hud />
         <FriendlyPanel />
+        <AnalyzingSpinner />
         <ObjectPopup />
         <ThreatPanel />
         <ThreatPopup />

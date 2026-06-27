@@ -1,4 +1,4 @@
-import { postRecompute, postReset, clearUnits } from '../lib/api'
+import { postReset, clearUnits } from '../lib/api'
 import { useStore } from '../lib/store'
 import { UnitType } from '../lib/types'
 
@@ -28,7 +28,6 @@ export default function FriendlyPanel() {
   const isHostile = activeSide === 'hostile'
   const sidePlacing: 'enemy' | 'friendly' = isHostile ? 'enemy' : 'friendly'
   const sideUnits = units.filter((u) => u.side === activeSide)
-  const hostile = units.filter((u) => u.side === 'hostile')
 
   // Static class strings — Tailwind's JIT cannot see interpolated names.
   const activeBtn = isHostile
@@ -36,16 +35,9 @@ export default function FriendlyPanel() {
     : 'border-[#3b82f6] text-[#5b9dff]'
   const idleBtn = 'border-tactical-border text-tactical-secondary hover:text-tactical-text'
 
-  const analyze = async () => {
-    setScanning(true)
-    try {
-      await postRecompute()
-      window.location.reload()
-    } catch {
-      setScanning(false)
-    }
-  }
-
+  // Threat projection is automatic now (SceneCanvas re-projects on every laydown
+  // change); no manual "analyse" step. Reset stays a full reload — it's the
+  // intentional wipe back to a blank battlefield, not the per-analysis rerender.
   // Wipe all placed units + analysed laydown, then reload so scene is fully blank.
   const reset = async () => {
     setScanning(true)
@@ -81,12 +73,12 @@ export default function FriendlyPanel() {
         </button>
       </div>
 
-      <div className="mt-2 grid grid-cols-3 gap-1 text-[9px]">
+      <div className="mt-2 flex flex-col gap-1 text-[10px]">
         {catalog.map((t) => (
           <button
             key={t.unit_type}
             onClick={() => setActiveUnitType(t.unit_type)}
-            className={`border px-1 py-1 ${activeUnitType === t.unit_type ? activeBtn : idleBtn}`}
+            className={`border px-2 py-1 text-left ${activeUnitType === t.unit_type ? activeBtn : idleBtn}`}
           >
             {t.label}
           </button>
@@ -99,33 +91,23 @@ export default function FriendlyPanel() {
         {removing && ' · click a unit to delete'}
       </div>
 
-      <button
-        onClick={analyze}
-        disabled={!hostile.length || scanning}
-        className="mt-2 w-full border border-tactical-danger px-2 py-1 text-[11px] text-tactical-danger hover:text-tactical-text disabled:opacity-40"
-      >
-        {scanning ? 'analysing… ~15 s' : '▶ analyse threat'}
-      </button>
       {units.length > 0 && (
-        <div className="mt-1.5 grid grid-cols-2 gap-1">
+        <div className="mt-1.5 flex flex-col gap-1">
           <button
             onClick={() => toggleLayer('viewcones')}
-            className={`border px-2 py-1 text-[11px] ${viewcones ? 'border-tactical-secondary text-tactical-secondary' : 'border-tactical-border text-tactical-muted'}`}
+            className={`border px-2 py-1 text-left text-[10px] ${viewcones ? 'border-tactical-secondary text-tactical-secondary' : 'border-tactical-border text-tactical-muted'}`}
           >
-            {viewcones ? '◉ view fields' : '○ view fields'}
+            {viewcones ? '◉ hide viewfields' : '○ show viewfields'}
           </button>
           <button
             onClick={reset}
             disabled={scanning}
-            className="border border-tactical-border px-2 py-1 text-[11px] text-tactical-secondary hover:text-tactical-text disabled:opacity-40"
+            className="border border-tactical-border px-2 py-1 text-left text-[10px] text-tactical-secondary hover:text-tactical-text disabled:opacity-40"
           >
             ✕ clear all
           </button>
         </div>
       )}
-      <div className="mt-1.5 text-[9px] leading-snug text-tactical-muted">
-        mark the enemy from your intel, then analyse — fields of fire, kill zones and danger are projected.
-      </div>
     </div>
   )
 }
