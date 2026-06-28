@@ -86,7 +86,7 @@ zero tool calls is blocked. ~8 of 15 typical soldier questions answerable today;
 danger-point sampler + `routes.py`. Edge/offline path: precomputed tile pack + on-device
 `viewshed` + staleness stamps.
 
-## Risk-zoning layer (BUILD #1 — in progress)
+## Risk-zoning layer (BUILD #1 — ✅ SHIPPED)
 
 Replace the turbo heatmap with **4 decision bands** tied to the `p_hit`/`depth` numbers we already
 compute, with green split by *reason*:
@@ -106,8 +106,31 @@ hatched) · **COVER** (box-masked, stops rounds). Default target height = dismou
 + `conf` byte (max shooter confidence on seen cells), sampled like `danger.bin`/`depth.bin`.
 Propagate unit `confidence` through `app.py` recompute → `threat_template` position → fields.
 **Frontend:** a fused **"Risk"** colour mode banding `danger`+`depth`+`reason` (+ conf opacity)
-instead of `TURBO()`; new legend; (fast-follow) dismount/mounted toggle + the "exposure delta"
-(dead-ground-on-foot-but-seen-mounted).
+instead of `TURBO()`; new legend.
+
+### Built on top since (current state of the analysis layer)
+
+The foundation above is shipped, plus the realism (next section) and these, all merged to `main`:
+
+- **Per-target-class risk** — the "risk to: **Infantry / Light veh / Armour**" toggle. Same
+  laydown, different surface per who's moving (`P(kill)=P(hit)×P(kill|hit)`; a sniper is
+  invisible on the armour surface, an AT team dominates it). Per-class `*_{class}.bin` + `?class=`.
+- **Probability of Lethal Fire (`pfatal`)** — a *true* marginal kill-probability surface alongside
+  the planning-cost (`danger`) one: `pfatal = 1 − ∏(1 − kill_i)`, confidence-weighted, with a
+  `fires.exposure_shots` multiplier (`config.json`). The HUD now exposes three analysis surfaces:
+  **Risk Classification** (bands), **Crossfire Indicator** (engagement depth), **Probability of
+  Lethal Fire** (`pfatal`).
+- **🚨 Soldier danger alert** — `fields.py` classifies each placed friendly into a zone written to
+  `fields.json.soldiers`; the frontend `DangerAlert` is a tiered (red/orange/yellow) per-soldier
+  notification with a **"locate" camera fly-to**.
+- **Auto-project** — placing/moving/removing a unit re-runs the projection with no button/reload
+  (debounced, single-flight).
+- **Unit move mode** (drag-to-reposition; place/move/remove mutually exclusive) and **3D unit
+  models** (per-type GLB via GLTFLoader; the NATO icon/pole/ring stay as the pick/tactical layer).
+
+> Mortar (indirect) note: it has no LOS to the target — its threat is a range annulus gated by
+> *observation* (any enemy's eyes) **or** a pre-registered TRP, so a lone mortar shows almost
+> nothing until a spotter is placed.
 
 ## Unit & weapon realism (research — supersedes the placeholder UNIT_CATALOG)
 
@@ -179,8 +202,10 @@ and a per-unit `E[class]` dict with the "show risk to" toggle — no first-class
 
 ## Recommended build order
 
-1. **Risk foundation + honesty fixes** (this) — bands, reason, confidence/thermal wiring.
-2. **`routes.py`** — covered approach (needs the per-shooter stack first).
-3. **Objective lens** — operator picks objective → reweight + surface (needs friendly-side fields).
-4. **Tablet Q&A** — tool-calling orchestrator.
-5. **`landcover.py`** — the accuracy unlock; can slot earlier if movement advice must be field-grade.
+1. ✅ **Risk foundation + honesty fixes** — bands, reason, confidence wiring. **DONE.**
+1b. ✅ **Unit & weapon realism** (two arcs, Hill p_hit, per-target-class effectiveness, AT/ATGM types). **DONE.**
+1c. ✅ **P(fatal) surface + soldier danger alert + 3D models + move mode + auto-project.** **DONE.**
+2. ⬜ **`routes.py`** — covered approach (needs the per-shooter stack first). *Not built.*
+3. ⬜ **Objective lens** — operator picks objective → reweight + surface (needs friendly-side fields). *Not built.*
+4. ⬜ **Tablet Q&A** — tool-calling orchestrator. *Not built.*
+5. ⬜ **`landcover.py`** — the accuracy unlock (canopy = concealment); can slot earlier if movement advice must be field-grade. *Not built.*

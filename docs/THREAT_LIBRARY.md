@@ -1,129 +1,198 @@
-# Threat Library — Red (OPFOR) asset model
+# Threat Library — the unit / weapon model
 
-> Scenario context for Track 1. We place a realistic **Russian threat laydown**
-> into the reconstructed zone — each asset with its own observation and weapon
-> envelope — then compute how friendly (Ukrainian / NATO) forces should maneuver
-> against it. This is the **situation-template** step of Intelligence Preparation
-> of the Battlefield (IPB, FM 34-130 / ATP 2-01.3): put the enemy where the
-> terrain favours them, then reason about it.
+> Reference for the **enemy (and friendly) asset model**: every battlefield actor
+> the operator can place, with its sensor and weapon envelope. The operator marks
+> the enemy from real intel (Track 1 is **operator-driven**, not auto-templated);
+> this catalog defines what each placed contact then *threatens*, and the
+> projection (`fields.py`) turns those envelopes into fields of fire, kill zones
+> and the danger surface on the terrain.
 
-Specs below are approximate, vary by variant/ammunition, and are sourced (see
-end). They are used as **engagement-envelope parameters**, not exact ballistics —
-good enough to drive terrain-grounded tactical reasoning, honest about being a
-model.
+**Single source of truth: `src/backend/units.py` (`UNIT_CATALOG`).** Both the
+analysis chain (`threat_template.py` → `fields.py`) and the frontend (via
+`GET /api/unit-profiles`) read from it — neither keeps its own copy. The numbers
+below are pulled directly from that file; if they ever disagree, the code wins.
 
----
-
-## The one distinction that organises everything: how the kill happens
-
-Every red asset kills you in one of three ways, and the terrain math differs for each:
-
-| Mode | Needs line of sight? | Defeated by | Examples |
-|------|----------------------|-------------|----------|
-| **Direct fire** | **Yes** — the shooter must see you | dead ground, defilade, cover, breaking LOS | sniper, tank gun, ATGM, IFV autocannon, MG |
-| **Indirect fire** | **No** — arcs over terrain | *not* terrain masking; only by denying **observation** (concealment, speed, smoke) and by range | mortar, howitzer, MLRS |
-| **Observation / enabling** | **Yes** (it's a sensor) | counter-recon, EW, staying unseen | recon UAV, forward observer, EW |
-
-**The master variable is observation.** Direct fire = *a weapon* sees you and you're in range. Indirect fire = *any observer* sees you, you're in range, and the kill chain closes in time. So the core computed product (see [MANEUVER_ANALYSIS.md](MANEUVER_ANALYSIS.md)) is the **combined enemy observation map** — the union of every red sensor's viewshed — with weapon range envelopes layered on top. Our viewshed engine is the heart of both red threat assessment and blue planning.
+Specs are **engagement-envelope parameters**, not exact ballistics — doctrinal
+defaults (NATO + OPFOR open-source specs, fires doctrine, ballistics) good enough
+to drive terrain-grounded tactical reasoning, honest about being a model.
 
 ---
 
-## Asset cards
+## The model — how a unit threatens a cell
 
-Each card gives the real-world numbers and the **model parameters** we drive the
-analysis with. `obs` = what it can *see* (sensor); `wpn` = what it can *kill*
-(weapon). Ranges in metres.
+Each unit type is a static `Unit` (a doctrinal sensor/weapon envelope). A placed
+instance is a `UnitContact` (position + heading + intel confidence). The fields
+projection reads these per-type properties:
 
-### Sniper / Designated Marksman — `sniper`
-- **Real:** SVD Dragunov 7.62×54 effective ~800 practical, ~1,200–1,300 max; precision rifles (Orsis T-5000) ~1,000–1,500; anti-materiel OSV-96 12.7 mm ~2,000 (defeats vehicles/optics).
-- **obs:** optical/thermal, **arc ~ limited (~120° sector)** from a hide, range ≈ weapon range. **wpn:** direct, min ~100, eff ~800, max ~1,300 (AMR ~2,000), arc = sector.
-- **Signature:** very low (the hardest to find). **Emplacement here:** upper floors of the tall houses (`36_house` 16 m, `24_house` 9 m) overlooking open approaches; treelines.
-- **Threat character:** denies a corridor to dismounts; the viewshed *is* the threat. Defeated by dead ground / breaking LOS.
+### Two arcs — observation vs lethality
+- **`obs_arc`** — the **OBSERVATION** sector (degrees): *"can they detect me?"*.
+  Wide / near-360° for alert dismounts and scanning snipers; frontal for a
+  buttoned turret. The union of every unit's observation arc is the
+  **observation map** — and that map is what gates indirect fire.
+- **`weapon_arc`** — the **LETHAL** sector of fire (degrees), centred on the
+  operator-set heading (the Principal Direction of Fire): *"can they kill me here,
+  now?"*. Narrow (a hull-down tank covers an arc, not 360°).
 
-### Main Battle Tank — `tank`  (T-72 / T-80 / T-90)
-- **Real:** 2A46M 125 mm — KE direct fire effective ~2,000–3,000, FCS to ~4,000–5,000; gun-launched ATGM 9M119 Refleks 100–5,000 (penetrates armour to 4 km). Coax 7.62 (~1,000), 12.7 AA MG (~1,500–2,000). Good thermal sights (day/night, multi-km).
-- **obs:** thermal+optical, **360°**, range ~4,000. **wpn:** direct, min ~100, eff ~2,500, max ~5,000 (ATGM), **360°** turret.
-- **Signature:** high (thermal/acoustic/visual), mobile (tracked). **Emplacement here:** hull-down behind walls/buildings or on roads with fields of fire down the long approach corridors; reverse-slope to ambush.
-- **Vulnerabilities:** top-attack, ATGM, defilade; large dead zones close-in and behind masks.
+Line of sight is traced once at the wide `obs_arc`; the lethal layer then masks
+that viewshed down to `weapon_arc`. (LOS is arc-independent, so the two-arc model
+costs no extra ray casts.)
 
-### ATGM team — `atgm`  (Kornet 9M133)
-- **Real:** base 5.0–5.5 km; Kornet-M ~8 km; FM-3 HE ~10 km; min ~100 m. Laser beam-rider, direct LOS, anti-armour (also bunkers/buildings).
-- **obs:** optical/thermal sight, sector ~360° (repositionable), range ≈ weapon. **wpn:** direct, min ~150, eff ~4,000, max ~5,500 (–10,000), arc = sector.
-- **Signature:** low until it fires (then laser/launch signature). **Emplacement here:** flanks/overwatch with long sightlines covering armour avenues; building edges.
-- **Threat character:** dominant vs vehicles on any open, observed corridor. Defeated by masking LOS and by suppressing the team.
+### Range envelope
+- **`eff_range_m`** — effective engagement range.
+- **`max_range_m`** — maximum range; `p_hit` fades to ~0 past it.
+- **`min_range_m`** — inner **dead zone** (mortar / ATGM arming distance; 0 for
+  most direct weapons). A cell is engageable only in the annulus `[min, max]`.
 
-### Infantry Fighting Vehicle — `ifv`  (BMP-2/3)
-- **Real:** 2A42 30 mm — vs light armour ~1,500, vs soft targets ~4,000, air to ~2,000–2,500; plus ATGM (Konkurs/Kornet). Optical/thermal sights.
-- **obs:** thermal+optical, 360°, range ~3,000. **wpn:** direct, eff ~2,000, max ~4,000, 360°.
-- **Signature:** high, mobile. **Emplacement:** overwatch of approaches, mutual support with tanks; carries dismounts.
+### Range-graded hit probability (Hill curve)
+`fields.p_hit` gives single-shot P(hit) vs a point target as a Hill curve, zero
+outside `[min, max]`:
 
-### Mortar — `mortar`  (2S12 Sani 120 mm)
-- **Real:** max ~7.1 km. High-angle **indirect** — arcs over terrain. Organic to infantry, responsive.
-- **obs:** none of its own (needs a forward observer). **wpn:** **indirect**, min ~0.5 km, max ~7,100, **360°**, area effect.
-- **Signature:** acoustic on firing; usually in defilade. **Emplacement here:** reverse slope / behind the building mass, unseen.
-- **Threat character:** kills you anywhere within 7 km **if an observer sees you** — terrain won't hide you, breaking observation will.
-
-### Towed / SP Howitzer — `howitzer`  (D-30 122 mm; 2S19 Msta 152 mm)
-- **Real:** D-30 ~15.3 km (21.9 km RAP); 2S19 Msta-S ~24–30 km (40 km RAP / Krasnopol precision). Indirect.
-- **obs:** none of its own. **wpn:** indirect, max 15,000–30,000+, 360° (or wide arc), area / precision.
-- **Threat character:** the whole zone is inside its fan. Lethality gated entirely by **observation + kill-chain time**, not terrain.
-
-### MLRS — `mlrs`  (BM-21 Grad 122 mm; BM-30 Smerch 300 mm)
-- **Real:** Grad ~20 km (–40 km), 40-rocket saturation; Smerch ~70–90 km (–120 km). Indirect, area.
-- **wpn:** indirect, max 20,000–90,000, area saturation. **Threat character:** punishes massing / assembly in the open; argues for dispersion and speed.
-
-### Reconnaissance UAV — `uav_recon`  (Orlan-10)  ← the kill-chain enabler
-- **Real:** loiters 1,000–1,500 m altitude, optical/IR/EW sensors, ~18 h endurance; **cues artillery to fire within ~3 min** of spotting a target (vs ~20 min without). EW variant jams GPS/comms; jamming-resistant.
-- **obs:** **wide-area, top-down**, effectively sees most of the open zone; this is what makes *every indirect weapon* lethal. **wpn:** none (it spots; the guns shoot).
-- **Threat character:** **this node turns "in range" into "in danger."** Suppressing/defeating observation (this drone + ground OPs) is the single highest-leverage blue action. Ties directly to SE3's **GNSS-denied** context — both sides fight blind/jammed.
-
-### Electronic Warfare — `ew`  (optional)
-- Jams GPS/comms — degrades our own recon drones and navigation. Note it as a constraint on the *blue* ISR that produced this 3D map, not a direct-fire threat.
-
----
-
-## Data schema — `data/enemy_assets.json` (proposed)
-
-Same UTM frame as the cloud and `bounding_boxes.json`, so red assets drop straight
-into the viewer and the analysis. Drives both the engagement envelopes and the
-viewsheds.
-
-```jsonc
-{
-  "id": "red_01_tank",
-  "class_label": "tank",            // sniper|tank|atgm|ifv|mortar|howitzer|mlrs|uav_recon|ew
-  "side": "OPFOR",
-  "position": [E, N, U],            // UTM metres; U includes sensor/muzzle height AGL
-  "facing_deg": 135,                // primary orientation (matters for arc-limited assets)
-  "obs": { "sensor": "thermal+optical", "range_m": 4000, "arc_deg": 360, "height_agl_m": 2.5 },
-  "wpn": { "fire_type": "direct",   // direct | indirect
-           "system": "2A46M 125mm + 9M119",
-           "min_range_m": 100, "eff_range_m": 2500, "max_range_m": 5000, "arc_deg": 360 },
-  "signature": { "thermal": "high", "acoustic": "high", "visual": "high" },
-  "mobility": "tracked",
-  "confidence": "suspected"         // confirmed | suspected | templated
-}
+```
+p_hit(d) = ph_p0 / (1 + (d / d50) ** ph_beta) ,   d50 = ph_shoulder * eff_range_m
 ```
 
-## Where red would actually sit on THIS terrain (auto-placement logic)
+- **`ph_p0`** — plateau / point-blank single-shot P(hit).
+- **`ph_shoulder`** — places the knee: `d50 = ph_shoulder · eff_range_m` is the
+  range at which P(hit) has fallen to half of `p0`.
+- **`ph_beta`** — steepness. High = *accurate-far-then-cliff* (tank FCS, ATGM,
+  sniper); low = *far-but-inaccurate* (autocannon, RPG).
 
-Don't scatter assets randomly — emplace them where doctrine + terrain say they'd
-be, reusing the layers we already compute:
-- **Snipers / OPs** → highest-viewshed points (tall buildings, ridge) that dominate the open approaches.
-- **Tanks / ATGM** → positions with long fields of fire down the armour avenues, ideally hull-down behind walls/buildings (use the 58 boxes as hull-down masks).
-- **Mortars / artillery** → **reverse-slope / defilade** behind the building mass and the ridge — unseen, indirect.
-- **Recon UAV** → overhead, near-global observation of open ground.
+A global exposure window (`fires.exposure_shots` in `config.json`, default 1)
+turns single-shot into cumulative `P = 1 − (1 − p)^n`.
 
-This makes the red laydown defensible to a jury ("you placed them where I would")
-and lets us generate **enemy most-likely / most-dangerous COAs** automatically.
+### Suppression
+- **`supp_s0`** — suppression plateau (the wide, low MG beaten zone, autofire).
+  `fields.p_supp` spreads it as `s0 / (1 + (d / (1.05·max))^3)`. **0** for
+  precision weapons (sniper, mortar, ATGM) → no suppression field.
+
+### Per-target-class effectiveness — `eff`
+`eff = {dismount, light_veh, armour}` is **P(kill | hit)** per target class. This
+is what makes one laydown threaten three movers differently: the risk surface is
+built **per class**, and a weapon with `eff[class] == 0` (a rifle vs armour) drops
+out of that class's surface entirely.
+
+So per shooter, per class: `P(kill) = LOS × p_hit × eff[class]`, unioned
+probabilistically across all shooters, weighted by each contact's intel
+`confidence`. Engagement-area **depth** is the count of weapons that can kill a
+cell; depth ≥ 2 = a **mutually-supporting kill zone** (cross-fire).
+
+---
+
+## The catalog (8 unit types)
+
+Pulled from `UNIT_CATALOG`. `obs` = observation arc, `wpn` = lethal weapon arc.
+Ranges in metres; `min` is the dead zone.
+
+| key | label | class | role | fire | obs° | wpn° | eff | max | min | eye (AGL) |
+|-----|-------|-------|------|------|-----:|-----:|----:|----:|----:|----:|
+| `tank` | Main Battle Tank | heavy | anti-armor | direct | 120 | 90 | 2200 | 2500 | 0 | 2.5 |
+| `ifv` | Infantry Fighting Veh. | heavy | anti-armor | direct | 120 | 90 | 1500 | 2500 | 0 | 2.5 |
+| `apc` | Armoured Transporter | medium | observer | direct | 270 | 90 | 1500 | 2000 | 0 | 2.0 |
+| `assault` | Assault Troops | light | observer | direct | 270 | 180 | 500 | 700 | 0 | 1.5 |
+| `sniper` | Sniper / OP | light | observer | direct | 200 | 45 | 1000 | 1300 | 0 | 1.7 |
+| `mortar` | Mortar Team | light | indirect | **indirect** | 0 | 360 | 7000 | 7000 | 200 | 1.5 |
+| `at_team` | AT Team (RPG) | light | anti-armor | direct | 180 | 90 | 400 | 800 | 20 | 1.5 |
+| `atgm_team` | ATGM Team (Javelin) | light | anti-armor | direct | 180 | 90 | 2500 | 4000 | 65 | 1.5 |
+
+Lethality parameters — Hill curve (`p0` / `shoulder` / `beta`), the derived knee
+`d50 = shoulder·eff`, suppression `s0`, and `eff` = P(kill|hit) per class:
+
+| key | p0 | shoulder | beta | d50 (m) | supp s0 | eff dismount | eff light_veh | eff armour |
+|-----|---:|---:|---:|---:|---:|---:|---:|---:|
+| `tank` | 0.98 | 1.36 | 9.0 | 2992 | 0.20 | 0.80 | 0.95 | 0.95 |
+| `ifv` | 0.90 | 1.00 | 4.0 | 1500 | 0.50 | 0.90 | 0.85 | 0.35 |
+| `apc` | 0.70 | 0.63 | 2.4 | 945 | 0.65 | 0.95 | 0.65 | 0.10 |
+| `assault` | 0.95 | 0.90 | 2.2 | 450 | 0.35 | 0.85 | 0.10 | 0.00 |
+| `sniper` | 0.97 | 1.19 | 8.0 | 1190 | 0.00 | 0.90 | 0.10 | 0.00 |
+| `mortar` | — | — | — | — | 0.00 | 0.75 | 0.45 | 0.05 |
+| `at_team` | 0.85 | 0.87 | 2.0 | 348 | 0.10 | 0.55 | 0.85 | 0.70 |
+| `atgm_team` | 0.90 | 1.20 | 12.0 | 3000 | 0.00 | 0.40 | 0.90 | 0.95 |
+
+The mortar's Hill params are unused (indirect uses an area/annulus path, see
+below); its `eff` still grades how lethal a round is per class.
+
+### Per-type character (why the numbers look the way they do)
+- **Main Battle Tank** — 120 mm APFSDS + FCS: `p0` 0.98, `beta` 9 (deadly-accurate
+  far, then a cliff), kills everything (`eff` 0.80 / 0.95 / 0.95). Narrow 90° turret
+  arc, wide 120° optics; large close-in / behind-mask dead zones.
+- **Infantry Fighting Vehicle** — autocannon (+ATGM): high P(hit) inside ~1.5 km,
+  shreds dismounts and light vehicles, only `eff` 0.35 vs armour (cannon, not gun).
+  Some suppression (`s0` 0.50).
+- **Armoured Transporter (APC)** — `.50` HMG: an *observer* role, dominant vs
+  dismounts (`eff` 0.95) and a heavy beaten zone (`s0` 0.65), near-useless vs armour
+  (0.10). Wide 270° optics with a rear blind spot.
+- **Assault Troops** — 5.56 rifle: short (eff 500, max 700), `eff` 0.85 vs
+  dismounts, ~0 vs vehicles. Wide 270° observation, broad 180° assigned sector.
+- **Sniper / OP** — 7.62 bolt/DMR: precise (`p0` 0.97, `beta` 8), narrow 45° lethal
+  arc but scans a wide 200° sector. Denies a corridor to dismounts; the viewshed
+  *is* the threat. No suppression.
+- **Mortar Team** — 120 mm **indirect** (see below).
+- **AT Team (RPG)** — RPG-7 / AT4: short (eff 400, max 800), 20 m arming dead zone,
+  strong vs vehicles/armour (0.85 / 0.70), middling vs dismounts.
+- **ATGM Team (Javelin)** — top-attack guided: long (eff 2500, max 4000), 65 m dead
+  zone, `beta` 12 (very flat then sharp cut-off), armour-killer (0.95), poor vs
+  dismounts (0.40).
+
+---
+
+## Direct vs indirect — the one distinction that organises the math
+
+`fire_kind` decides which projection pass a unit enters:
+
+| Mode (`fire_kind`) | Needs line of sight? | Defeated by | In catalog |
+|--------------------|----------------------|-------------|------------|
+| **direct** | **Yes** — the shooter must see you | dead ground, defilade, cover, breaking LOS | tank, ifv, apc, assault, sniper, at_team, atgm_team |
+| **indirect** | **No** — arcs over terrain | denying **observation** (concealment, speed) and being out of range | mortar |
+
+**Indirect (mortar) special case.** A mortar has no line of sight and no sector of
+fire. In `fields.run` it threatens its **range annulus** `[min_range, max_range]`
+(the 200 m → 7000 m ring), but a cell in that annulus is only *dangerous* when it is
+also either **observed** — covered by the union of every unit's observation arc — or
+falls under a **pre-registered TRP**. TRPs are seeded automatically on
+terrain-forced chokepoints (narrow passages on the medial axis of the passable
+terrain), so an attacker can't game the map by hugging dead ground through a
+registered defile. The indirect danger weight is `clip(0.6·observed + 0.7·trp, 0,
+0.9)`, then scaled by the mortar's per-class `eff`.
+
+---
+
+## How a laydown is built (operator-driven)
+
+1. Operator picks a unit **type** and **clicks the map** to place each contact
+   (`POST /api/units` → `PlaceUnitRequest`); the backend fills the doctrinal
+   envelope from `UNIT_CATALOG`. Optionally places friendly positions too.
+2. The frontend auto-projects on change: `POST /api/threat/recompute` →
+   `threat_template.from_manual` writes `build/threat.json` (each shooter oriented
+   on its operator-set heading, or onto our positions if no heading) →
+   `fields.run` projects the fields and writes the per-class surfaces.
+3. The threat is revealed only once analysed — the frontend gates on
+   `threat.json.avenue_source === 'operator'`.
+
+There is **no auto-templating** (the old viewshed-reciprocity placement was
+deleted — it produced unrealistic, co-located laydowns). The human provides ground
+truth; the system does the spatial reasoning.
+
+> Legacy alias: `sniper_op` resolves to `sniper` (`units.resolve_unit`) so the
+> older threat-template key still maps onto the canonical type.
+
+---
+
+## Data caveat — concealment vs cover
+
+The DSM treats tree canopy as a **solid occluder**, so "dead ground" behind
+vegetation is really **concealment** (it hides you) — it does **not** stop a round
+like a wall (**cover**) does. The projection tags those cells as lower-confidence,
+not safe (reason code `dead-ground` ≠ `cover`). A proper bare-earth / land-cover
+layer (`landcover.py`) is the planned fix.
 
 ---
 
 ## Sources
-- [T-90 / 2A46M & 9M119 Refleks (Wikipedia)](https://en.wikipedia.org/wiki/T-90) · [9M119 Svir/Refleks](https://en.wikipedia.org/wiki/9M119_Svir/Refleks) · [T-90 (GlobalSecurity)](https://www.globalsecurity.org/military/world/russia/t-90.htm)
-- [SVD / sniper ranges (24/7 Wall St.)](https://247wallst.com/special-report/2024/04/11/the-russian-militarys-longest-range-firearms/) · [Orsis T-5000](https://247wallst.com/military/2025/10/17/russian-special-forces-add-the-orsis-t-5000-rifle-for-longer-range-operations/)
-- [9M133 Kornet (Wikipedia)](https://en.wikipedia.org/wiki/9M133_Kornet) · [Kornet-M](https://en.wikipedia.org/wiki/9M133M_Kornet-M)
-- [BMP-2 / 2A42 30 mm (Wikipedia)](https://en.wikipedia.org/wiki/Shipunov_2A42)
-- [D-30 122 mm](https://en.wikipedia.org/wiki/122_mm_howitzer_2A18_(D-30)) · [2S19 Msta-S](https://en.wikipedia.org/wiki/2S19_Msta-S) · [BM-21 Grad](https://en.wikipedia.org/wiki/BM-21_Grad) · [BM-30 Smerch](https://en.wikipedia.org/wiki/BM-30_Smerch) · [2S12 Sani](https://en.wikipedia.org/wiki/2S12_Sani)
-- [Orlan-10 (Wikipedia)](https://en.wikipedia.org/wiki/STC_Orlan-10) · [Russia's kill chain in Ukraine (CEPA)](https://cepa.org/comprehensive-reports/adaptation-under-fire-mass-speed-and-accuracy-transform-russias-kill-chain-in-ukraine/)
-- [FM 34-130 Intelligence Preparation of the Battlefield](https://irp.fas.org/doddir/army/fm34-130.pdf) · [ATP 2-01.3](https://home.army.mil/wood/application/files/8915/5751/8365/ATP_2-01.3_Intelligence_Preparation_of_the_Battlefield.pdf)
+- Tank gun / FCS & gun-launched ATGM: [T-90 / 2A46M](https://en.wikipedia.org/wiki/T-90) · [9M119 Refleks](https://en.wikipedia.org/wiki/9M119_Svir/Refleks)
+- IFV autocannon: [2A42 30 mm](https://en.wikipedia.org/wiki/Shipunov_2A42)
+- Sniper/DMR ranges: [SVD Dragunov](https://en.wikipedia.org/wiki/SVD) · [Orsis T-5000]
+- AT / ATGM: [RPG-7](https://en.wikipedia.org/wiki/RPG-7) · [FGM-148 Javelin](https://en.wikipedia.org/wiki/FGM-148_Javelin) · [9M133 Kornet](https://en.wikipedia.org/wiki/9M133_Kornet)
+- Mortar: [2S12 Sani 120 mm](https://en.wikipedia.org/wiki/2S12_Sani)
+- Doctrine: [FM 34-130 IPB](https://irp.fas.org/doddir/army/fm34-130.pdf) · [ATP 2-01.3](https://home.army.mil/wood/application/files/8915/5751/8365/ATP_2-01.3_Intelligence_Preparation_of_the_Battlefield.pdf)
+</content>
+</invoke>
