@@ -220,20 +220,20 @@ UNIT_CATALOG: dict[str, Unit] = {
     "apc": Unit(
         unit_type=UnitType.apc,     weight_class=WeightClass.medium, label="Armoured Transporter",
         role=ThreatRole.observer,   fire_kind=FireKind.direct,
-        obs_arc=360, weapon_arc=90, eff_range_m=1500, max_range_m=2000, min_range_m=0, height_agl_m=2.0,
-        ph_p0=0.70, ph_shoulder=0.63, ph_beta=2.4, supp_s0=0.65, eff=_eff(0.95, 0.65, 0.10),  # .50 HMG
+        obs_arc=270, weapon_arc=90, eff_range_m=1500, max_range_m=2000, min_range_m=0, height_agl_m=2.0,
+        ph_p0=0.70, ph_shoulder=0.63, ph_beta=2.4, supp_s0=0.65, eff=_eff(0.95, 0.65, 0.10),  # .50 HMG; rear blind spot
     ),
     "assault": Unit(
         unit_type=UnitType.assault, weight_class=WeightClass.light,  label="Assault Troops",
         role=ThreatRole.observer,   fire_kind=FireKind.direct,
-        obs_arc=360, weapon_arc=180, eff_range_m=500, max_range_m=700, min_range_m=0, height_agl_m=1.5,
-        ph_p0=0.95, ph_shoulder=0.90, ph_beta=2.2, supp_s0=0.35, eff=_eff(0.85, 0.10, 0.00),  # 5.56 rifle
+        obs_arc=270, weapon_arc=180, eff_range_m=500, max_range_m=700, min_range_m=0, height_agl_m=1.5,
+        ph_p0=0.95, ph_shoulder=0.90, ph_beta=2.2, supp_s0=0.35, eff=_eff(0.85, 0.10, 0.00),  # 5.56 rifle; assigned sector, rear blind
     ),
     "sniper": Unit(
         unit_type=UnitType.sniper,  weight_class=WeightClass.light,  label="Sniper / OP",
         role=ThreatRole.observer,   fire_kind=FireKind.direct,
-        obs_arc=360, weapon_arc=45, eff_range_m=1000, max_range_m=1300, min_range_m=0, height_agl_m=1.7,
-        ph_p0=0.97, ph_shoulder=1.19, ph_beta=8.0, supp_s0=0.0, eff=_eff(0.90, 0.10, 0.00),  # 7.62 bolt/DMR
+        obs_arc=200, weapon_arc=45, eff_range_m=1000, max_range_m=1300, min_range_m=0, height_agl_m=1.7,
+        ph_p0=0.97, ph_shoulder=1.19, ph_beta=8.0, supp_s0=0.0, eff=_eff(0.90, 0.10, 0.00),  # 7.62 bolt/DMR; scans a sector
     ),
     "mortar": Unit(
         unit_type=UnitType.mortar,  weight_class=WeightClass.light,  label="Mortar Team",

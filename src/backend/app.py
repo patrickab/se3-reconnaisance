@@ -120,8 +120,8 @@ def clear_laydown() -> None:
     open blank (terrain + object boxes only) until the operator places the enemy
     and analyses. Terrain artifacts (DSM, viewshed) are independent and kept.
     """
-    for f in (*BUILD.glob("danger_*.bin"), *BUILD.glob("depth_*.bin"), *BUILD.glob("reason_*.bin"),
-              *BUILD.glob("conf_*.bin"), *BUILD.glob("suppress_*.bin")):
+    for f in (*BUILD.glob("danger_*.bin"), *BUILD.glob("pfatal_*.bin"), *BUILD.glob("depth_*.bin"),
+              *BUILD.glob("reason_*.bin"), *BUILD.glob("conf_*.bin"), *BUILD.glob("suppress_*.bin")):
         f.unlink(missing_ok=True)
     for name in ("threat.json", "threat.bin", "danger.bin", "depth.bin", "reason.bin", "conf.bin", "fields.json"):
         (BUILD / name).unlink(missing_ok=True)
@@ -252,6 +252,11 @@ def _class_bin(kind: str, cls: str) -> Response:
 @app.get("/api/danger")
 def danger(cls: str = Query("dismount", alias="class")) -> Response:
     return _class_bin("danger", cls)
+
+
+@app.get("/api/pfatal")
+def pfatal(cls: str = Query("dismount", alias="class")) -> Response:  # P(fatal enemy fire), 0-255
+    return _class_bin("pfatal", cls)
 
 
 @app.get("/api/depth")

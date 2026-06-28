@@ -5,7 +5,7 @@ import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js'
 import { BoundingBox, ClassVisibility, CloudMeta, ColorMode, FieldsInfo, LayerKey, SceneCursor, ScreenPoint, ThreatInfo, ThreatPosition, UnitContact, UnitProfile, UnitType, ViewshedInfo, WorldCoordinate } from '../lib/types'
 import ms from 'milsymbol'
 import { CLASS_COLORS, TURBO } from '../lib/colors'
-import { fetchCloud, fetchViewshed, fetchThreat, fetchDanger, fetchDepth, fetchReason, fetchConf } from '../lib/api'
+import { fetchCloud, fetchViewshed, fetchThreat, fetchDanger, fetchPfatal, fetchDepth, fetchReason, fetchConf } from '../lib/api'
 import { v2w, w2v } from '../lib/utils'
 
 // NATO APP-6 / MIL-STD-2525 symbol codes (SIDC). Affiliation: H=hostile, F=friend.
@@ -110,7 +110,8 @@ function symbolTexture(sidc: string): THREE.Texture {
 let cloudBuf: ArrayBuffer | null = null
 let vsFlags: Uint8Array | null = null
 let thFlags: Uint8Array | null = null
-let dgFlags: Uint8Array | null = null
+let dgFlags: Uint8Array | null = null   // planning cost (cover credit + kill-zone emphasis) — feeds Risk bands
+let pfFlags: Uint8Array | null = null   // P(fatal enemy fire): true probability surface (its own color mode)
 let dpFlags: Uint8Array | null = null
 let rsFlags: Uint8Array | null = null   // reason: 0 out-of-range 1 dead-ground 2 cover 3 exposed
 let cfFlags: Uint8Array | null = null   // intel-confidence the cell is threatened (0-255)
@@ -169,6 +170,11 @@ export class Viewer {
   private raf = 0
   private clock = new THREE.Clock()
   private keys = new Set<string>()
+  private focusAnim: {
+    camStart: THREE.Vector3; camEnd: THREE.Vector3
+    tgtStart: THREE.Vector3; tgtEnd: THREE.Vector3
+    t: number; dur: number
+  } | null = null
 
   private points?: THREE.Points
   private meta?: CloudMeta
@@ -184,12 +190,15 @@ export class Viewer {
   private pickCb: (box: BoundingBox | null, cursor?: SceneCursor) => void = () => {}
   private placing: 'enemy' | 'friendly' | null = null
   private removing = false
+  private moving = false
   private activeSide: 'hostile' | 'friendly' = 'hostile'
   private placeCb: (e: number, n: number, u: number, yaw_deg: number) => void = () => {}
   private placeEnemyCb: (e: number, n: number, u: number, yaw_deg: number) => void = () => {}
   private pendingEnemyPin: { vx: number; vy: number; vz: number; E: number; N: number; U: number } | null = null
   private reorientPin: { unitId: string; vx: number; vy: number; vz: number; color: number } | null = null
   private reorientCb: (id: string, azimuth: number) => void = () => {}
+  private movePin: { unitId: string; vy: number } | null = null
+  private moveCb: (id: string, world: [number, number, number]) => void = () => {}
   private activeUnitType: UnitType = 'sniper'
   private placedUnitPickables: THREE.Object3D[] = []
   private unitById = new Map<string, UnitContact>()
@@ -247,7 +256,9 @@ export class Viewer {
 
     const loop = () => {
       this.raf = requestAnimationFrame(loop)
-      this.apply(this.clock.getDelta())
+      const dt = this.clock.getDelta()
+      this.apply(dt)
+      this.stepFocus(dt)
       this.controls.update()
       this.emitCursorScreen()
       this.renderer.render(this.scene, this.camera)
@@ -266,6 +277,7 @@ export class Viewer {
     if (vs && !vsFlags) vsFlags = await fetchViewshed()
     if (threat && !thFlags) thFlags = await fetchThreat()
     if (fields && !dgFlags) dgFlags = await fetchDanger()
+    if (fields && !pfFlags) pfFlags = await fetchPfatal()
     if (fields && !dpFlags) dpFlags = await fetchDepth()
     if (fields && !rsFlags) rsFlags = await fetchReason()
     if (fields && !cfFlags) cfFlags = await fetchConf()
@@ -324,7 +336,6 @@ export class Viewer {
     this.buildBoxes(boxes, meta)
     if (vs) this.buildObserver(vs, meta)
     if (threat) this.buildThreat(threat, meta)
-    if (fields) this.buildTRPs(fields, meta)
 
     const d = Math.max(sx, sy)
     this.camera.position.set(0, d * 0.55, d * 0.85)
@@ -332,6 +343,46 @@ export class Viewer {
     this.controls.update()
     this.resize()
     return { viewshed: true, threat: !!thFlags, fields: !!dgFlags }
+  }
+
+  // locate framing — close oblique "battle view". Tune to taste.
+  private static FOCUS_DIST = 280   // m from the soldier
+  private static FOCUS_PITCH = 38   // deg above the horizon (38 ≈ the oblique 3D look)
+
+  /** Glide the camera to centre a world coord (E,N,U) at a fixed close oblique framing
+   *  (FOCUS_DIST / FOCUS_PITCH), keeping the operator's current heading. Two-phase: the look
+   *  rotates toward the soldier first, then the camera slides in to centre it. */
+  focusWorld(world: [number, number, number]) {
+    if (!this.meta) return
+    const [vx, vy, vz] = w2v(world, this.meta.origin, this.meta.span)
+    const tgtEnd = new THREE.Vector3(vx, vy, vz)
+    const camStart = this.camera.position.clone()
+    const tgtStart = this.controls.target.clone()
+    // keep current heading (azimuth), override distance + pitch for the zoomed oblique view
+    const dirXZ = new THREE.Vector3(camStart.x - tgtStart.x, 0, camStart.z - tgtStart.z)
+    if (dirXZ.lengthSq() < 1e-6) dirXZ.set(0, 0, 1)
+    dirXZ.normalize()
+    const pitch = (Viewer.FOCUS_PITCH * Math.PI) / 180
+    const camEnd = tgtEnd.clone()
+      .addScaledVector(dirXZ, Viewer.FOCUS_DIST * Math.cos(pitch))
+      .add(new THREE.Vector3(0, Viewer.FOCUS_DIST * Math.sin(pitch), 0))
+    this.focusAnim = { camStart, camEnd, tgtStart, tgtEnd, t: 0, dur: 1.35 }
+  }
+
+  // Stepped from the render loop. Target leads (rotation first), camera follows on a delay
+  // (translation second), so the view turns toward the soldier and then slides over to centre it.
+  private stepFocus(dt: number) {
+    const a = this.focusAnim
+    if (!a) return
+    if (this.keys.size) { this.focusAnim = null; return }   // operator took manual control
+    a.t = Math.min(1, a.t + dt / a.dur)
+    const easeOut = (x: number) => 1 - (1 - x) ** 3
+    const easeInOut = (x: number) => (x < 0.5 ? 4 * x ** 3 : 1 - (-2 * x + 2) ** 3 / 2)
+    const rot = easeOut(Math.min(1, a.t / 0.55))            // rotate toward soldier first
+    const mov = easeInOut(Math.max(0, (a.t - 0.35) / 0.65)) // then slide the camera over
+    this.controls.target.lerpVectors(a.tgtStart, a.tgtEnd, rot)
+    this.camera.position.lerpVectors(a.camStart, a.camEnd, mov)
+    if (a.t >= 1) this.focusAnim = null
   }
 
   // Per-point overlay colours (viewshed/threat/danger/depth) from the module-cached
@@ -357,16 +408,16 @@ export class Viewer {
       }
       this.colors.threat = new THREE.BufferAttribute(colTH, 3)
     }
-    if (dgFlags) {
-      const colDG = new Float32Array(n * 3) // continuous danger/cost surface (turbo)
+    if (pfFlags) {
+      const colPF = new Float32Array(n * 3) // P(fatal enemy fire) — continuous probability (turbo)
       for (let i = 0; i < n; i++) {
-        const v = dgFlags[i] / 255
+        const v = pfFlags[i] / 255
         const c = v < 0.04 ? [0.1, 0.11, 0.13] : TURBO(v)
-        colDG[i * 3] = srgb2lin(c[0])
-        colDG[i * 3 + 1] = srgb2lin(c[1])
-        colDG[i * 3 + 2] = srgb2lin(c[2])
+        colPF[i * 3] = srgb2lin(c[0])
+        colPF[i * 3 + 1] = srgb2lin(c[1])
+        colPF[i * 3 + 2] = srgb2lin(c[2])
       }
-      this.colors.danger = new THREE.BufferAttribute(colDG, 3)
+      this.colors.pfatal = new THREE.BufferAttribute(colPF, 3)
     }
     if (dpFlags) {
       const colDP = new Float32Array(n * 3) // engagement-area depth (overlapping fields of fire)
@@ -390,13 +441,13 @@ export class Viewer {
     this.meta = meta
     thFlags = await fetchThreat()
     dgFlags = fields ? await fetchDanger() : null
+    pfFlags = fields ? await fetchPfatal() : null
     dpFlags = fields ? await fetchDepth() : null
     rsFlags = fields ? await fetchReason() : null   // refresh the risk surface on auto-project too
     cfFlags = fields ? await fetchConf() : null
     this.buildOverlayColors()
-    this.clearGroup(this.threatGroup)   // drop old arrow/TRPs before rebuilding (no doubling)
+    this.clearGroup(this.threatGroup)   // drop old arrow before rebuilding (no doubling)
     if (threat) this.buildThreat(threat, meta)
-    if (fields) this.buildTRPs(fields, meta)
     this.setColorMode(this.colorMode)   // rebind the freshly built buffer to the geometry
   }
 
@@ -427,15 +478,20 @@ export class Viewer {
     this.colors.risk = new THREE.BufferAttribute(col, 3)
   }
 
-  /** "Risk to" toggle: re-fetch the per-class risk bins and repaint, leaving the analyst
-   *  danger/depth modes (dismount) untouched. */
+  /** "Risk for" toggle: re-fetch the per-class bins for whatever battlefield surface
+   *  is currently active (risk / crossfire / probability of lethal fire) and repaint. */
   async setRiskClass(cls: 'dismount' | 'light_veh' | 'armour') {
     const q = cls === 'dismount' ? undefined : cls
-    const [d, k, r, c] = await Promise.all([fetchDanger(q), fetchDepth(q), fetchReason(q), fetchConf(q)])
+    const [d, k, r, c, pf] = await Promise.all([
+      fetchDanger(q), fetchDepth(q), fetchReason(q), fetchConf(q), fetchPfatal(q),
+    ])
     if (!d || !k || !r) return
-    rkD = d; rkK = k; rkR = r; rkC = c
+    if (pf) pfFlags = pf
+    dpFlags = k
+    this.buildOverlayColors()      // rebuild pfatal/depth colours from the freshly fetched per-class bins (also resets rk arrays to dismount)
+    rkD = d; rkK = k; rkR = r; rkC = c   // override the risk arrays with the selected class's bins
     this.buildRiskColors()
-    if (this.colorMode === 'risk') this.setColorMode('risk')
+    if (this.colorMode === 'risk' || this.colorMode === 'depth' || this.colorMode === 'pfatal') this.setColorMode(this.colorMode)
   }
 
   setOverlayOnRgb(on: boolean) {
@@ -449,7 +505,7 @@ export class Viewer {
   // for this mode (rgb/height/temperature), so the pure attribute is used.
   private blendedOverlay(mode: ColorMode): THREE.BufferAttribute | null {
     const flags = mode === 'viewshed' ? vsFlags : mode === 'threat' ? thFlags
-      : mode === 'danger' ? dgFlags : mode === 'depth' ? dpFlags : null
+      : mode === 'pfatal' ? pfFlags : mode === 'depth' ? dpFlags : null
     // risk reads several arrays (for the selected target class), not one — handle it first
     if (mode === 'risk' && rkD && rkK && rkR && this.colRGBArr) {
       const base = this.colRGBArr
@@ -560,12 +616,17 @@ export class Viewer {
   // ---- operator placement (enemy from intel, or our own positions) ----
   setPlacing(mode: 'enemy' | 'friendly' | null) {
     this.placing = mode
-    this.canvas.style.cursor = mode || this.removing ? 'crosshair' : 'default'
+    this.canvas.style.cursor = mode || this.removing || this.moving ? 'crosshair' : 'default'
   }
 
   setRemoving(on: boolean) {
     this.removing = on
-    this.canvas.style.cursor = on || this.placing ? 'crosshair' : 'default'
+    this.canvas.style.cursor = on || this.placing || this.moving ? 'crosshair' : 'default'
+  }
+
+  setMoving(on: boolean) {
+    this.moving = on
+    this.canvas.style.cursor = on || this.placing || this.removing ? 'crosshair' : 'default'
   }
 
   setActiveUnitType(t: UnitType) { this.activeUnitType = t }
@@ -592,6 +653,7 @@ export class Viewer {
   onRemoveUnit(cb: (id: string) => void) { this.removeUnitCb = cb }
   onPickPlacedUnit(cb: (id: string, cursor: SceneCursor) => void) { this.pickPlacedUnitCb = cb }
   onReorientUnit(cb: (id: string, azimuth: number) => void) { this.reorientCb = cb }
+  onMoveUnit(cb: (id: string, world: [number, number, number]) => void) { this.moveCb = cb }
 
   setEnemyMarkers(units: UnitContact[]) {
     this.placeContacts(units, 'hostile', this.placedEnemyGroup, 0xff2b2b)
@@ -829,26 +891,6 @@ export class Viewer {
     this.threatGroup.add(new THREE.ArrowHelper(dir, new THREE.Vector3(sx0, sy0 + 18, sz0), 150, FRIEND, 40, 24))
   }
 
-  // Pre-planned mortar target points on chokepoints (cyan crosshair markers).
-  private buildTRPs(fields: FieldsInfo, meta: CloudMeta) {
-    const TRP = 0x22d3d3
-    const groundY = -meta.span[2] / 2
-    for (const [E, N] of fields.trps) {
-      const [vx, , vz] = w2v([E, N, meta.origin[2]], meta.origin, meta.span)
-      const ring = this.decal(new THREE.Mesh(
-        new THREE.RingGeometry(6, 9, 28),
-        new THREE.MeshBasicMaterial({ color: TRP, opacity: 0.9, side: THREE.DoubleSide })
-      ))
-      ring.rotation.x = -Math.PI / 2
-      ring.position.set(vx, groundY + 0.4, vz)
-      const bar = this.decal(new THREE.Mesh(new THREE.BoxGeometry(16, 1, 2), new THREE.MeshBasicMaterial({ color: TRP })))
-      bar.position.set(vx, groundY + 0.5, vz)
-      const bar2 = bar.clone()
-      bar2.rotation.y = Math.PI / 2
-      this.threatGroup.add(ring, bar, bar2)
-    }
-  }
-
   private buildViewshedColors(flags: Uint8Array) {
     const colVS = new Float32Array(flags.length * 3)
     for (let i = 0; i < flags.length; i++) {
@@ -1001,8 +1043,20 @@ export class Viewer {
   private onPlaceMouseDown = (e: MouseEvent) => {
     if (!this.meta || !this.points) return
     this.downXY = { x: e.clientX, y: e.clientY }
-    // reorient: drag from an existing icon or rotation handle (only when not in place/remove mode)
-    if (!this.placing && !this.removing) {
+    // move mode: drag an existing icon to reposition it (keep its elevation)
+    if (this.moving && !this.placing && !this.removing) {
+      this.raycaster.setFromCamera(this.toNDC(e), this.camera)
+      const iconHit = this.raycaster.intersectObjects(this.placedUnitPickables, true)[0]
+      if (iconHit) {
+        const obj = iconHit.object
+        const [, vy] = (obj.userData.poleBase ?? obj.position.toArray()) as [number, number, number]
+        this.movePin = { unitId: obj.userData.unitId as string, vy }
+        this.controls.enabled = false
+        return
+      }
+    }
+    // reorient: drag from an existing icon or rotation handle (only when not in place/remove/move mode)
+    if (!this.placing && !this.removing && !this.moving) {
       this.raycaster.setFromCamera(this.toNDC(e), this.camera)
       const iconHit = this.raycaster.intersectObjects(this.placedUnitPickables, true)[0]
       if (iconHit) {
@@ -1039,6 +1093,26 @@ export class Viewer {
 
   private onPlaceMouseMove = (e: MouseEvent) => {
     if (!(e.buttons & 1)) return
+    // move drag: project pointer onto the unit's horizontal plane and translate
+    // the icon + pole + ring live; the backend PATCH fires on mouseup.
+    if (this.movePin && this.meta) {
+      if (this.downXY && Math.hypot(e.clientX - this.downXY.x, e.clientY - this.downXY.y) < Viewer.DRAG_PX) return
+      const { unitId, vy } = this.movePin
+      const pt = this.groundHit(e, vy)
+      if (!pt) return
+      const icon = this.placedUnitPickables.find((p) => p.userData.unitId === unitId)
+      if (icon) {
+        icon.position.x = pt.x
+        icon.position.z = pt.z
+        icon.userData.poleBase = [pt.x, vy, pt.z]
+        icon.userData.world = [
+          pt.x + (this.meta.origin[0] + this.meta.span[0] / 2),
+          (this.meta.origin[1] + this.meta.span[1] / 2) - pt.z,
+          vy + (this.meta.origin[2] + this.meta.span[2] / 2),
+        ]
+      }
+      return
+    }
     // reorient drag: update the cone live while dragging from an icon/handle (only once it's a drag)
     if (this.reorientPin && this.meta) {
       if (this.downXY && Math.hypot(e.clientX - this.downXY.x, e.clientY - this.downXY.y) < Viewer.DRAG_PX) return
@@ -1095,6 +1169,22 @@ export class Viewer {
   private reorientJustFinished = false  // suppress onClick popup after drag
 
   private onPlaceMouseUp = (e: MouseEvent) => {
+    if (this.movePin && this.meta) {
+      const { unitId, vy } = this.movePin
+      this.movePin = null
+      this.controls.enabled = true
+      const moved = this.downXY ? Math.hypot(e.clientX - this.downXY.x, e.clientY - this.downXY.y) : 0
+      if (moved < Viewer.DRAG_PX) return   // a click, not a drag → let onClick open the info panel
+      this.reorientJustFinished = true
+      const pt = this.groundHit(e, vy)
+      if (pt) {
+        const E = pt.x + (this.meta.origin[0] + this.meta.span[0] / 2)
+        const N = (this.meta.origin[1] + this.meta.span[1] / 2) - pt.z
+        const U = vy + (this.meta.origin[2] + this.meta.span[2] / 2)
+        this.moveCb(unitId, [E, N, U])
+      }
+      return
+    }
     if (this.reorientPin && this.meta) {
       const { unitId, vx, vy, vz } = this.reorientPin
       this.reorientPin = null
@@ -1132,6 +1222,8 @@ export class Viewer {
     if (!this.meta) return
     // placement is handled by mousedown/move/up (drag-to-orient) for both sides — skip here
     if (this.placing) return
+    // move mode: clicks do not open the info panel (drag repositions; click is a no-op)
+    if (this.moving) return
     // reorient drag just finished — don't open popup on the icon that was dragged
     if (this.reorientJustFinished) { this.reorientJustFinished = false; return }
     // a drag (camera orbit) also fires 'click' — ignore it so orbiting doesn't measure/select

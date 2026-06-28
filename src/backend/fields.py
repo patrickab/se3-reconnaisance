@@ -38,7 +38,7 @@ from scipy.ndimage import distance_transform_edt, maximum_filter
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from src.backend.app import MAX_POINTS, PACK, VOXEL, pack_cloud, terrain_for  # noqa: E402
+from src.backend.app import CONFIG, MAX_POINTS, PACK, VOXEL, pack_cloud, terrain_for  # noqa: E402
 from src.backend.terrain import BUILD, DATA, box_polygon, save_geotiff  # noqa: E402
 from src.backend.units import TARGET_HEIGHT_M, resolve_unit  # noqa: E402
 from src.backend.visibility import viewshed  # noqa: E402
@@ -51,6 +51,10 @@ if TYPE_CHECKING:
 CLASSES = list(TARGET_HEIGHT_M)
 HEIGHTS = sorted(set(TARGET_HEIGHT_M.values()))
 KILL_EPS = 0.05   # a cell counts toward a class's engagement depth once P(kill) clears this
+# ponytail: one global exposure multiplier — shots a target absorbs while crossing an exposed cell;
+# turns single-shot SSKP into cumulative P(kill) = 1-(1-p)^n. =1 → single shot (no change).
+# Per-weapon rate-of-fire (catalog field) if absolute calibration ever matters; relative map holds either way.
+EXPOSURE_SHOTS = float(CONFIG.get("fires", {}).get("exposure_shots", 1))
 
 
 def _profile(typ: str) -> dict:
@@ -161,9 +165,10 @@ def run(side: str = "west", res: float = 2.0) -> dict:
             if kc <= 0.0:
                 continue                                                # this weapon can't kill class c
             vis_w = vis_by_h[TARGET_HEIGHT_M[c]] & wmask & band         # weapon-sector lethal LOS
-            kill = vis_w * pr * kc                                      # P(kill) contribution
-            direct[c] = 1.0 - (1.0 - direct[c]) * (1.0 - kill)         # probabilistic union
-            depth[c] += (kill > KILL_EPS)                              # +1 per weapon that can kill here
+            kill = vis_w * pr * kc                                      # single-shot P(kill | shooter present)
+            kcum = 1.0 - (1.0 - kill * ec) ** EXPOSURE_SHOTS           # exposure window × P(enemy actually here)
+            direct[c] = 1.0 - (1.0 - direct[c]) * (1.0 - kcum)         # probabilistic union over shooters
+            depth[c] += (kill > KILL_EPS)                              # structural count of weapons (pre-confidence)
             reach[c] |= band
             conf[c] = np.maximum(conf[c], vis_w * ec)
             if sup is not None:
@@ -195,12 +200,13 @@ def run(side: str = "west", res: float = 2.0) -> dict:
     # ---- indirect: range ANNULUS (min-range dead zone → max) AND (observed by any eyes OR a
     #      pre-registered TRP). `observed` is the union of every unit's observation arc (above). ----
     in_range = np.zeros((h, w), bool)
-    ind_kill = {c: 0.0 for c in CLASSES}            # best indirect P(kill|hit) per class
+    ind_kill = {c: np.zeros((h, w), np.float32) for c in CLASSES}   # per-cell P(kill|hit) × presence confidence
     for e in enemies:
         prof = _profile(e["type"])
         if prof["fire"] != "indirect":
             continue
         E, N, _ = e["world"]
+        ec = float(e.get("confidence", 1.0))
         d = np.hypot(gx - E, gy - N)
         ann = (d >= prof["mn"]) & (d <= prof["mx"])
         in_range |= ann
@@ -208,18 +214,25 @@ def run(side: str = "west", res: float = 2.0) -> dict:
             kc = float(prof["kill"].get(c, 0.0))
             if kc > 0.0:
                 reach[c] |= ann
-                ind_kill[c] = max(ind_kill[c], kc)
+                ind_kill[c] = np.maximum(ind_kill[c], ann * kc * ec)   # gated to this tube's annulus
     indirect = in_range.astype(np.float32) * np.clip(0.6 * observed + 0.7 * trp, 0.0, 0.9)
 
     # ---- cover (boxes stop rounds) reduces risk; combine into one continuous cost PER CLASS ----
     cover_near = np.clip(1.0 - distance_transform_edt(~box_mask) * res / 8.0, 0.0, 1.0)
     valid = t["valid"]
-    costs, reasons = {}, {}
+    costs, reasons, pfatal = {}, {}, {}
     for c in CLASSES:
         emphasis = 1.0 + 0.35 * np.clip(depth[c] - 1, 0, None)            # kill zones (overlap) hurt more
         cost = (direct[c] + 0.5 * indirect * ind_kill[c]) * emphasis - 0.3 * cover_near
         costs[c] = np.clip(np.where(valid | box_mask, cost, 0.0), 0.0, 1.0)
         save_geotiff(costs[c], transform, t["epsg"], BUILD / f"fields_cost_{c}.tif")
+        # P(fatal enemy fire): independent-union of direct + indirect lethal hits. A valid marginal
+        # probability — every term carries P(kill|hit) AND P(enemy actually placed here) (the `ec`
+        # weighting above), unlike `cost`, which credits cover and emphasises kill zones for routing.
+        p_ind = np.clip(indirect * ind_kill[c], 0.0, 1.0)
+        pf = 1.0 - (1.0 - direct[c]) * (1.0 - p_ind)
+        pfatal[c] = np.where(valid | box_mask, pf, 0.0).astype(np.float32)
+        assert pfatal[c].min() >= 0.0 and pfatal[c].max() <= 1.0, "pfatal escaped [0,1]"
         # WHY a cell is (un)safe — "not seen" != "safe": canopy is concealment, only a box stops a
         # round. (0 out-of-range, 1 dead-ground, 2 cover, 3 exposed)
         seen = depth[c] > 0
@@ -247,6 +260,7 @@ def run(side: str = "west", res: float = 2.0) -> dict:
     # one set per target class — the "show risk to" toggle picks which (default = dismount)
     for c in CLASSES:
         (BUILD / f"danger_{c}.bin").write_bytes(_sample(costs[c], 255))
+        (BUILD / f"pfatal_{c}.bin").write_bytes(_sample(pfatal[c], 255))
         (BUILD / f"depth_{c}.bin").write_bytes(_sample(depth[c].astype(np.float32)))
         (BUILD / f"reason_{c}.bin").write_bytes(_sample(reasons[c].astype(np.float32)))
         (BUILD / f"conf_{c}.bin").write_bytes(_sample(conf[c], 255))
@@ -321,7 +335,7 @@ def run(side: str = "west", res: float = 2.0) -> dict:
 
     print(f"{n_direct} direct shooters | dismount depth {info['max_engagement_depth']} "
           f"| {info['pct_in_kill_zone']}% in a >=2 kill zone | {len(trps)} TRPs | classes {CLASSES}")
-    print("wrote build/fields_cost_*.tif + fields_depth.tif + {danger,depth,reason,conf,suppress}_<class>.bin + fields.json")
+    print("wrote build/fields_cost_*.tif + fields_depth.tif + {danger,pfatal,depth,reason,conf,suppress}_<class>.bin + fields.json")
     return info
 
 

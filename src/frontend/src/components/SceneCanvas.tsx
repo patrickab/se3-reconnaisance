@@ -15,6 +15,7 @@ export default function SceneCanvas() {
   const overlayOnRgb = useStore((s) => s.overlayOnRgb)
   const placing = useStore((s) => s.placing)
   const removing = useStore((s) => s.removing)
+  const moving = useStore((s) => s.moving)
   const activeSide = useStore((s) => s.activeSide)
   const activeUnitType = useStore((s) => s.activeUnitType)
   const units = useStore((s) => s.units)
@@ -30,6 +31,7 @@ export default function SceneCanvas() {
     const viewer = new Viewer(canvasRef.current)
     viewerRef.current = viewer
     if (import.meta.env.DEV) (window as unknown as { viewer: Viewer }).viewer = viewer
+    useStore.setState({ focusWorld: (w) => viewer.focusWorld(w) })
     viewer.onCursorScreen((screen) => useStore.getState().setSelectedCursorScreen(screen))
     viewer.onPick((b, cursor) => useStore.getState().select(b, cursor ?? null))
     viewer.onPickThreat((p, point) => useStore.getState().selectThreat(p, point ?? null))
@@ -44,6 +46,7 @@ export default function SceneCanvas() {
     viewer.onRemoveUnit((id) => useStore.getState().removeUnit(id))
     viewer.onPickPlacedUnit((id, cursor) => useStore.getState().selectUnit(id, cursor))
     viewer.onReorientUnit((id, azimuth) => useStore.getState().reorientUnit(id, azimuth))
+    viewer.onMoveUnit((id, world) => useStore.getState().moveUnit(id, world))
 
     ;(async () => {
       try {
@@ -76,7 +79,24 @@ export default function SceneCanvas() {
       disposed = true
       viewer.dispose()
       viewerRef.current = null
+      useStore.setState({ focusWorld: null })
     }
+  }, [])
+
+  // Sync from backend — picks up units added via the API without going through the UI.
+  // Only calls setUnits when the ID set changes so the auto-recompute doesn't fire spuriously.
+  useEffect(() => {
+    const poll = setInterval(async () => {
+      try {
+        const remote = await api.fetchUnits()
+        const current = useStore.getState().units
+        const currentIds = new Set(current.map((u) => u.id))
+        if (remote.length !== current.length || remote.some((u) => !currentIds.has(u.id))) {
+          useStore.getState().setUnits(remote)
+        }
+      } catch {}
+    }, 2000)
+    return () => clearInterval(poll)
   }, [])
 
   useEffect(() => {
@@ -85,7 +105,7 @@ export default function SceneCanvas() {
       const t = e.target as HTMLElement
       if (t?.isContentEditable || t?.tagName === 'INPUT' || t?.tagName === 'TEXTAREA') return
       const s = useStore.getState()
-      if (s.placing || s.removing) { s.setPlacing(null); s.setRemoving(false) }
+      if (s.placing || s.removing || s.moving) { s.setPlacing(null); s.setRemoving(false); s.setMoving(false) }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -96,6 +116,7 @@ export default function SceneCanvas() {
   useEffect(() => { viewerRef.current?.setOverlayOnRgb(overlayOnRgb) }, [overlayOnRgb])
   useEffect(() => { viewerRef.current?.setPlacing(placing) }, [placing])
   useEffect(() => { viewerRef.current?.setRemoving(removing) }, [removing])
+  useEffect(() => { viewerRef.current?.setMoving(moving) }, [moving])
   useEffect(() => { viewerRef.current?.setActiveSide(activeSide) }, [activeSide])
   useEffect(() => { viewerRef.current?.setActiveUnitType(activeUnitType) }, [activeUnitType])
 
