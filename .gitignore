@@ -51,3 +51,6 @@ __MACOSX/
 # stale tsc emits
 src/frontend/vite.config.js
 src/frontend/vite.config.d.ts
+
+# local-only dev runner (uses existing .venv/node_modules, no reinstall)
+run.local.sh

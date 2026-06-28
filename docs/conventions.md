@@ -31,7 +31,7 @@
 
 - Python files/functions use `snake_case`; TypeScript components use `PascalCase`; frontend helpers/types use idiomatic TS naming.
 - Box class labels are `car | container | wall | house | shelter`.
-- Doctrinal unit types (`UNIT_CATALOG` keys): `tank | ifv | apc | assault | sniper | mortar`. Legacy alias `sniper_op` resolves to `sniper`.
+- Doctrinal unit types (`UNIT_CATALOG` keys): `tank | ifv | apc | assault | sniper | mortar | at_team | atgm_team`. Legacy alias `sniper_op` resolves to `sniper`.
 - `Side`: `friendly | hostile | unknown`. `FireKind`: `direct | indirect | observer`. `ThreatRole`: `observer | anti_armor | indirect`.
 - OPFOR conceptual labels in docs include `sniper | tank | atgm | ifv | mortar | howitzer | mlrs | uav_recon | ew`.
 - Coordinates are UTM metres. Browser view frame is east -> X, elevation -> Y/up, north -> -Z.
