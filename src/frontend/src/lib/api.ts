@@ -44,6 +44,7 @@ const bin = async (p: string): Promise<Uint8Array | null> => {
 // risk surfaces are per target class (dismount/light_veh/armour); omit for the default (dismount)
 const cq = (p: string, cls?: string) => bin(cls ? `${p}?class=${cls}` : p)
 export const fetchDanger = (cls?: string) => cq('/api/danger', cls)
+export const fetchPfatal = (cls?: string) => cq('/api/pfatal', cls)  // P(fatal enemy fire), true probability
 export const fetchDepth = (cls?: string) => cq('/api/depth', cls)
 export const fetchReason = (cls?: string) => cq('/api/reason', cls)  // 0 out-of-range 1 dead-ground 2 cover 3 exposed
 export const fetchConf = (cls?: string) => cq('/api/conf', cls)       // intel-confidence the cell is threatened
