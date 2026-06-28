@@ -5,6 +5,7 @@ import { UnitType } from '../lib/types'
 export default function FriendlyPanel() {
   const placing = useStore((s) => s.placing)
   const removing = useStore((s) => s.removing)
+  const moving = useStore((s) => s.moving)
   const activeSide = useStore((s) => s.activeSide)
   const activeUnitType = useStore((s) => s.activeUnitType)
   const units = useStore((s) => s.units)
@@ -14,6 +15,7 @@ export default function FriendlyPanel() {
   const toggleLayer = useStore((s) => s.toggleLayer)
   const setPlacing = useStore((s) => s.setPlacing)
   const setRemoving = useStore((s) => s.setRemoving)
+  const setMoving = useStore((s) => s.setMoving)
   const setActiveSide = useStore((s) => s.setActiveSide)
   const setActiveUnitType = useStore((s) => s.setActiveUnitType)
   const setScanning = useStore((s) => s.setScanning)
@@ -49,10 +51,11 @@ export default function FriendlyPanel() {
     }
   }
 
-  // place / remove are mutually exclusive map modes
-  const togglePlacing = () => { setRemoving(false); setPlacing(placing === sidePlacing ? null : sidePlacing) }
-  const toggleRemoving = () => { setPlacing(null); setRemoving(!removing) }
-  const selectSide = (side: 'hostile' | 'friendly') => { setRemoving(false); setPlacing(null); setActiveSide(side) }
+  // place / move / remove are mutually exclusive map modes
+  const togglePlacing = () => { setRemoving(false); setMoving(false); setPlacing(placing === sidePlacing ? null : sidePlacing) }
+  const toggleMoving = () => { setPlacing(null); setRemoving(false); setMoving(!moving) }
+  const toggleRemoving = () => { setPlacing(null); setMoving(false); setRemoving(!removing) }
+  const selectSide = (side: 'hostile' | 'friendly') => { setRemoving(false); setMoving(false); setPlacing(null); setActiveSide(side) }
 
   return (
     <div className="absolute right-4 top-4 z-10 w-60 panel px-3 py-2 font-mono">
@@ -62,14 +65,18 @@ export default function FriendlyPanel() {
         <button onClick={() => selectSide('friendly')} className={`border px-2 py-1 ${!isHostile ? activeBtn : idleBtn}`}>ALLY</button>
       </div>
 
-      {/* place / remove map modes — grouped right under the side selector */}
-      <div className="mt-1 grid grid-cols-2 gap-1 text-[11px]">
-        <button onClick={togglePlacing} className={`border px-2 py-1 ${placing === sidePlacing ? activeBtn : idleBtn}`}>
-          {placing === sidePlacing ? '● placing' : 'place unit'}
+      {/* place / move / remove map modes — grouped right under the side selector */}
+      <div className="mt-1 grid grid-cols-3 gap-1 text-[11px]">
+        <button onClick={togglePlacing} className={`border px-1 py-1 ${placing === sidePlacing ? activeBtn : idleBtn}`}>
+          {placing === sidePlacing ? '● placing' : 'place'}
+        </button>
+        <button onClick={toggleMoving} disabled={!units.length}
+          className={`border px-1 py-1 ${moving ? activeBtn : idleBtn} disabled:opacity-30`}>
+          {moving ? '● moving' : 'move'}
         </button>
         <button onClick={toggleRemoving} disabled={!units.length}
-          className={`border px-2 py-1 ${removing ? activeBtn : idleBtn} disabled:opacity-30`}>
-          {removing ? '● removing' : 'remove unit'}
+          className={`border px-1 py-1 ${removing ? activeBtn : idleBtn} disabled:opacity-30`}>
+          {removing ? '● removing' : 'remove'}
         </button>
       </div>
 
@@ -85,9 +92,10 @@ export default function FriendlyPanel() {
         ))}
       </div>
 
-      <div className="mt-1.5 text-[10px] text-tactical-muted">
+      <div className="mt-2 text-[10px] text-tactical-muted">
         {sideUnits.length} {isHostile ? 'enemy' : 'ally'} placed
         {placing === sidePlacing && (isHostile ? ' · drag to orient' : ' · click to drop')}
+        {moving && ' · drag a unit to reposition'}
         {removing && ' · click a unit to delete'}
       </div>
 

@@ -26,6 +26,7 @@ interface AppState {
   selectedUnitId: string | null
   placing: 'enemy' | 'friendly' | null
   removing: boolean
+  moving: boolean
   activeSide: 'hostile' | 'friendly'
   activeUnitType: UnitType
   units: UnitContact[]
@@ -48,6 +49,7 @@ interface AppState {
   focusWorld: ((world: [number, number, number]) => void) | null   // set by SceneCanvas → Viewer.focusWorld
   setPlacing: (placing: 'enemy' | 'friendly' | null) => void
   setRemoving: (removing: boolean) => void
+  setMoving: (moving: boolean) => void
   setActiveSide: (side: 'hostile' | 'friendly') => void
   setActiveUnitType: (t: UnitType) => void
   setUnits: (units: UnitContact[]) => void
@@ -56,6 +58,7 @@ interface AppState {
   removeUnit: (id: string) => Promise<void>
   clearUnits: (side: 'hostile' | 'friendly') => Promise<void>
   reorientUnit: (id: string, azimuth: number) => Promise<void>
+  moveUnit: (id: string, world: [number, number, number]) => Promise<void>
   setScanning: (scanning: boolean) => void
 }
 
@@ -92,6 +95,7 @@ export const useStore = create<AppState>((set) => ({
   selectedUnitId: null,
   placing: null,
   removing: false,
+  moving: false,
   activeSide: 'hostile',
   activeUnitType: 'sniper',
   units: [],
@@ -102,11 +106,11 @@ export const useStore = create<AppState>((set) => ({
   setReady: ({ viewshedReady, threatReady, fieldsReady }) => set({ viewshedReady, threatReady, fieldsReady }),
   setViewshed: (viewshedInfo) => set({ viewshedInfo, viewshedReady: true }),
   setError: (error) => set({ error, loading: false }),
-  // Kill (depth) / Danger / Risk read best painted onto the real map — default the RGB overlay
-  // on when entering them; the operator can still toggle it off.
+  // Crossfire (depth) / P(fatal) / Risk read best painted onto the real map — force the RGB
+  // overlay on when entering them (the manual toggle was removed from the HUD).
   setColorMode: (colorMode) => set((s) => ({
     colorMode,
-    overlayOnRgb: colorMode === 'danger' || colorMode === 'depth' || colorMode === 'risk' ? true : s.overlayOnRgb,
+    overlayOnRgb: colorMode === 'pfatal' || colorMode === 'depth' || colorMode === 'risk' ? true : s.overlayOnRgb,
   })),
   setRiskClass: (riskClass) => set({ riskClass }),
   setOverlayOnRgb: (overlayOnRgb) => set({ overlayOnRgb }),
@@ -120,6 +124,7 @@ export const useStore = create<AppState>((set) => ({
   )),
   setPlacing: (placing) => set({ placing }),
   setRemoving: (removing) => set({ removing }),
+  setMoving: (moving) => set({ moving }),
   setActiveSide: (activeSide) => set({ activeSide }),
   setActiveUnitType: (activeUnitType) => set({ activeUnitType }),
   setUnits: (units) => set({ units }),
@@ -145,6 +150,11 @@ export const useStore = create<AppState>((set) => ({
 
   reorientUnit: async (id, azimuth) => {
     const updated = await api.patchUnit(id, { azimuth })
+    set((s) => ({ units: s.units.map((u) => u.id === id ? updated : u) }))
+  },
+
+  moveUnit: async (id, world) => {
+    const updated = await api.patchUnit(id, { world })
     set((s) => ({ units: s.units.map((u) => u.id === id ? updated : u) }))
   },
 

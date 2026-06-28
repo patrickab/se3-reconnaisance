@@ -16,12 +16,17 @@ const CLASS_ICON: Record<BoxClass, LucideIcon> = {
   shelter: Warehouse, house: House, container: Container, wall: BrickWall, car: Car,
 }
 
-const MODES: { key: ColorMode; label: string; needs?: 'viewshed' | 'threat' | 'fields' }[] = [
+// base map appearance — always available
+const BASE_MODES: { key: ColorMode; label: string }[] = [
   { key: 'rgb', label: 'RGB' },
   { key: 'height', label: 'Height' },
-  { key: 'risk', label: 'Risk', needs: 'fields' },
-  { key: 'danger', label: 'Danger', needs: 'fields' },
-  { key: 'depth', label: 'Kill zone', needs: 'fields' },
+]
+
+// fires/threat analysis surfaces — all need the projected fields (place troops, then Scan)
+const FIRES_MODES: { key: ColorMode; label: string }[] = [
+  { key: 'risk', label: 'Risk Classification' },
+  { key: 'depth', label: 'Crossfire Indicator' },
+  { key: 'pfatal', label: 'Probability of Lethal Fire' },
 ]
 
 // "risk to" — which mover's surface to show (per-target-class risk)
@@ -43,13 +48,9 @@ const RISK_LEGEND: { sw: string; label: string }[] = [
 
 export default function Hud() {
   const [collapsed, setCollapsed] = useState(false)
-  const { meta, boxes, colorMode, setColorMode, layers, toggleLayer, classVisibility, toggleClass } = useStore()
-  const overlayOnRgb = useStore((s) => s.overlayOnRgb)
-  const setOverlayOnRgb = useStore((s) => s.setOverlayOnRgb)
+  const { meta, boxes, colorMode, setColorMode, layers, classVisibility, toggleClass } = useStore()
   const riskClass = useStore((s) => s.riskClass)
   const setRiskClass = useStore((s) => s.setRiskClass)
-  const viewshedReady = useStore((s) => s.viewshedReady)
-  const threatReady = useStore((s) => s.threatReady)
   const fieldsReady = useStore((s) => s.fieldsReady)
   if (!meta) return null
 
@@ -86,46 +87,50 @@ export default function Hud() {
             </div>
 
             <div>
-              <div className="sr-only">Display mode</div>
-              <div className="segmented-toggle grid grid-cols-4 font-mono text-[10px] text-tactical-secondary">
-              {MODES.map((mode) => {
-                const active = colorMode === mode.key
-                const ready = mode.needs === 'viewshed' ? viewshedReady
-                  : mode.needs === 'threat' ? threatReady
-                  : mode.needs === 'fields' ? fieldsReady
-                  : true
-                const hint = mode.needs === 'viewshed' ? 'run visibility.py' : 'place your troops, then Scan'
-                return (
-                  <button
-                    key={mode.key}
-                    disabled={!ready}
-                    onClick={() => ready && setColorMode(mode.key)}
-                    title={!ready ? hint : undefined}
-                    className={`min-w-0 truncate px-2 py-1.5 transition hover:text-tactical-text disabled:cursor-not-allowed disabled:opacity-40 ${
-                      active ? 'bg-tactical-accent/15 text-tactical-accent shadow-[inset_0_0_0_1px_rgb(208_168_92_/_0.28)]'
-                        : mode.key === 'threat' ? 'text-tactical-danger'
-                        : mode.key === 'temperature' ? 'text-tactical-warning'
-                        : ''
-                    }`}
-                    aria-pressed={active}
-                  >
-                    {mode.label}
-                  </button>
-                )
-              })}
+              <div className="sr-only">Base map mode</div>
+              <div className="segmented-toggle grid grid-cols-2 font-mono text-[11px] text-tactical-secondary">
+                {BASE_MODES.map((mode) => {
+                  const active = colorMode === mode.key
+                  return (
+                    <button
+                      key={mode.key}
+                      onClick={() => setColorMode(mode.key)}
+                      className={`min-w-0 truncate px-2 py-1.5 transition hover:text-tactical-text ${
+                        active ? 'bg-tactical-accent/15 text-tactical-accent shadow-[inset_0_0_0_1px_rgb(208_168_92_/_0.28)]' : ''
+                      }`}
+                      aria-pressed={active}
+                    >
+                      {mode.label}
+                    </button>
+                  )
+                })}
               </div>
-              <label className="mt-1.5 flex cursor-pointer items-center justify-between gap-2 text-[10px] text-tactical-secondary hover:text-tactical-text">
-                <span>over RGB map</span>
-                <input
-                  type="checkbox"
-                  checked={overlayOnRgb}
-                  onChange={(e) => setOverlayOnRgb(e.target.checked)}
-                  className="h-3 w-3 accent-tactical-accent"
-                />
-              </label>
-              {colorMode === 'risk' && (
+
+              <div className="eyebrow mb-1.5 mt-3">Battlefield Analysis</div>
+              <div className="space-y-1">
+                {FIRES_MODES.map((mode) => {
+                  const active = colorMode === mode.key
+                  return (
+                    <button
+                      key={mode.key}
+                      disabled={!fieldsReady}
+                      onClick={() => fieldsReady && setColorMode(mode.key)}
+                      title={!fieldsReady ? 'place your troops, then Scan' : undefined}
+                      className={`w-full truncate border px-2.5 py-1.5 text-left font-mono text-[11px] transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                        active
+                          ? 'border-tactical-accent/40 bg-tactical-accent/15 text-tactical-accent'
+                          : 'border-tactical-border/60 text-tactical-secondary hover:text-tactical-text'
+                      }`}
+                      aria-pressed={active}
+                    >
+                      {mode.label}
+                    </button>
+                  )
+                })}
+              </div>
+              {['risk', 'depth', 'pfatal'].includes(colorMode) && (
                 <div className="mt-2">
-                  <div className="mb-1 text-[10px] uppercase tracking-wide text-tactical-muted">risk to</div>
+                  <div className="mb-1 text-[10px] uppercase tracking-wide text-tactical-muted">risk for</div>
                   <div className="segmented-toggle grid grid-cols-3 font-mono text-[11px] text-tactical-secondary">
                     {RISK_TO.map((rc) => (
                       <button key={rc.key} onClick={() => setRiskClass(rc.key)}
@@ -149,23 +154,7 @@ export default function Hud() {
             </div>
 
             <div>
-              <button
-                onClick={() => toggleLayer('boxes')}
-                className="tactical-button w-full text-tactical-secondary"
-                aria-pressed={boxesVisible}
-              >
-                {boxesVisible ? 'Hide object boxes' : 'Show object boxes'}
-              </button>
-              {threatReady && (
-                <button
-                  onClick={() => toggleLayer('threats')}
-                  className="mt-1 w-full border border-tactical-danger/60 px-2 py-1 text-left text-[10px] text-tactical-danger hover:text-tactical-text"
-                >
-                  {layers.threats ? 'hide enemy markers' : 'show enemy markers'}
-                </button>
-              )}
-
-              <div className="mt-2 grid grid-cols-1 gap-1">
+              <div className="grid grid-cols-1 gap-1">
                 {CLASSES.map(({ key, label }) => {
                   const active = classVisibility[key]
                   const Icon = CLASS_ICON[key]
