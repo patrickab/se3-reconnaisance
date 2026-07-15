@@ -5,7 +5,7 @@
 > judgments an operator needs — *where is the enemy likely to approach, where do
 > I have field of fire, where am I exposed* — fast and legible.
 
-https://github.com/user-attachments/assets/e91124e1-2f16-4d56-9156-d2f6d1501e29
+Demo (recording): [User attachment](https://github.com/user-attachments/assets/e91124e1-2f16-4d56-9156-d2f6d1501e29)
 
 Docs:
 - [`docs/challange.md`](docs/challange.md) — the challenge brief & our direction
